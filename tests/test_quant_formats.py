@@ -25,10 +25,11 @@ def _st(name, tensors):
     return p
 
 
-# Cles minimales "Qwen-Image" (marqueur transformer_blocks) au format ComfyUI.
-_W = "model.diffusion_model.transformer_blocks.0.attn.to_q.weight"
+# Cles minimales "FLUX.2" (marqueur single_transformer_blocks) au format ComfyUI.
+# Relevees sur le transformer reel de FLUX.2-klein-4B (cf. _QWEN_KEY_MARKERS).
+_W = "model.diffusion_model.single_transformer_blocks.0.attn.to_q.weight"
 # La MEME cle au layout diffusers: le loader doit retirer le prefixe ComfyUI, sinon
-# QwenImageTransformer2DModel (mappe par une fonction identite dans diffusers) ne
+# Flux2Transformer2DModel (mappe par une fonction identite dans diffusers) ne
 # reconnait aucune cle et le modele reste sur 'meta' ("Cannot copy out of meta tensor").
 _WD = _W[len("model.diffusion_model."):]
 
@@ -110,7 +111,7 @@ def test_aio_bundle_filtered():
 
 def test_comfy_prefix_is_stripped():
     """Regression: les checkpoints Qwen single-file (Comfy-Org, Civitai) nomment TOUT
-    'model.diffusion_model.*'. diffusers 0.39 mappe QwenImageTransformer2DModel avec une
+    'model.diffusion_model.*'. diffusers 0.39 mappe Flux2Transformer2DModel avec une
     fonction IDENTITE -- il n'enleve donc pas ce prefixe lui-meme. Le garder = 100% de
     cles inconnues, aucun poids charge, modele laisse sur 'meta', et dispatch_model
     echoue sur "Cannot copy out of meta tensor; no data!" (vu sur
@@ -118,10 +119,10 @@ def test_comfy_prefix_is_stripped():
     w = torch.randn(4, 4).to(torch.float8_e4m3fn)
     p = _st("prefixed.safetensors", {
         _W: w,
-        "model.diffusion_model.img_in.weight": torch.randn(4, 4, dtype=torch.bfloat16),
+        "model.diffusion_model.x_embedder.weight": torch.randn(4, 4, dtype=torch.bfloat16),
     })
     sd = cz_pipeline._load_dequant_state_dict(p)
-    assert sorted(sd) == ["img_in.weight", _WD], sorted(sd)
+    assert sorted(sd) == [_WD, "x_embedder.weight"], sorted(sd)
     assert not any(k.startswith("model.diffusion_model.") for k in sd)
 
 
@@ -154,7 +155,7 @@ def test_prefixed_single_file_is_loaded_as_a_state_dict():
     import diffusers
     p = _st("route.safetensors", {
         _W: torch.randn(4, 4, dtype=torch.bfloat16),
-        "model.diffusion_model.img_in.weight": torch.randn(4, 4, dtype=torch.bfloat16),
+        "model.diffusion_model.x_embedder.weight": torch.randn(4, 4, dtype=torch.bfloat16),
     })
     seen = {}
 
@@ -164,17 +165,17 @@ def test_prefixed_single_file_is_loaded_as_a_state_dict():
             seen["src"] = src
             return "MODEL"
 
-    old_cls = diffusers.QwenImageTransformer2DModel
+    old_cls = diffusers.Flux2Transformer2DModel
     old_t = cz_pipeline.ZIMAGE_TRANSFORMER
-    diffusers.QwenImageTransformer2DModel = _Fake
+    diffusers.Flux2Transformer2DModel = _Fake
     cz_pipeline.ZIMAGE_TRANSFORMER = p
     try:
         assert cz_pipeline._load_transformer() == "MODEL"
     finally:
-        diffusers.QwenImageTransformer2DModel = old_cls
+        diffusers.Flux2Transformer2DModel = old_cls
         cz_pipeline.ZIMAGE_TRANSFORMER = old_t
     assert isinstance(seen["src"], dict), "un chemin a ete passe au lieu du state dict"
-    assert sorted(seen["src"]) == ["img_in.weight", _WD], sorted(seen["src"])
+    assert sorted(seen["src"]) == [_WD, "x_embedder.weight"], sorted(seen["src"])
 
 
 def test_convert_device_cpu_is_respected():
@@ -210,7 +211,7 @@ def test_foreign_arch_rejected():
     try:
         cz_pipeline._load_dequant_state_dict(p)
     except RuntimeError as e:
-        raised = "Qwen-Image" in str(e)
+        raised = "FLUX.2" in str(e)
     assert raised, "checkpoint quantifie d'une autre archi doit etre refuse clairement"
 
 

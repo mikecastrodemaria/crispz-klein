@@ -54,7 +54,7 @@ DEFAULT_OUTPUT_DIR = "out"
 DEFAULT_OUTPUT_FORMAT = "png"        # png | webp | jpg
 SUPPORTED_FORMATS = ("png", "webp", "jpg")
 IMG_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".avif", ".heic")
-DEFAULT_BASE_REPO = "Qwen/Qwen-Image"
+DEFAULT_BASE_REPO = "black-forest-labs/FLUX.2-klein-4B"
 DEFAULT_ESRGAN_DIR = os.path.join(HERE, "upscale_models")
 
 
@@ -104,11 +104,14 @@ DEFAULT_OUTPUT_DIR = CONFIG.get("default_output_dir", DEFAULT_OUTPUT_DIR)
 DEFAULT_OUTPUT_FORMAT = CONFIG.get("default_output_format", DEFAULT_OUTPUT_FORMAT)
 
 # Profils par modele: substring du nom -> reglages recommandes (steps/guidance).
+# klein-4B est distille: 4 steps, et la guidance n'a AUCUN effet (mesuree bit-a-bit
+# identique de 1.0 a 8.0, cf. tests/test_klein_guidance.py). On la laisse a 1.0 partout
+# pour que l'UI n'affiche pas une valeur qui suggere un CFG actif.
 MODEL_PROFILES = CONFIG.get("model_profiles") or {
-    "qwen": {"steps": 30, "guidance": 4.0},
-    "edit": {"steps": 30, "guidance": 4.0},
+    "klein": {"steps": 4, "guidance": 1.0},
+    "flux-2": {"steps": 4, "guidance": 1.0},
 }
-DEFAULT_MODEL_PROFILE = CONFIG.get("default_model_profile") or {"steps": 30, "guidance": 4.0}
+DEFAULT_MODEL_PROFILE = CONFIG.get("default_model_profile") or {"steps": 4, "guidance": 1.0}
 
 
 def profile_for_model(name):

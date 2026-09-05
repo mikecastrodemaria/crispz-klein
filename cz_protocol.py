@@ -46,7 +46,7 @@ import urllib.request
 from cz_core import CONFIG, APP_VERSION, _log
 
 PROTOCOL = 1
-TOOL = "crispz-qwen-edit"
+TOOL = "crispz-klein"
 OPS = ("caps", "gen", "upscale", "edit", "inpaint")
 
 # What this MODEL FAMILY can do at all (diffusers pipelines that exist for
@@ -67,6 +67,9 @@ _DEF_URL = "http://127.0.0.1:7860"
 MAX_REFS = 4                      # Omni pipeline limit (same as the UI)
 
 # spec.fast (op edit) -> nom du mode cote cz_pipeline.set_edit_speed
+# klein n'a pas de preset d'acceleration: le modele est deja distille a 4 steps et
+# aucune LoRA Lightning FLUX.2 n'existe. Seul 'off' reste valide; les autres alias sont
+# conserves pour qu'un spec ecrit pour qwen-edit passe (warning), pas une erreur.
 _FAST_ALIASES = {"off": "Off", "none": "Off", "auto": "Auto (model profile)",
                  "lightning-4": "Lightning 4 steps", "lightning4": "Lightning 4 steps",
                  "lightning 4 steps": "Lightning 4 steps",
@@ -78,21 +81,23 @@ _FAST_ALIASES = {"off": "Off", "none": "Off", "auto": "Auto (model profile)",
 # no instruction-edit model exists for Krea) - config can never turn refs on
 # there, and caps must say so instead of promising a capability that raises.
 OMNI_SUPPORTED = True
-# Default omni repo when the family ships one out of the box
-# (crispz-qwen-edit: Qwen-Image-Edit). Empty = config/env must set it.
-OMNI_DEFAULT = (os.environ.get("QWEN_EDIT_MODEL")
-                or "Qwen/Qwen-Image-Edit-2509")   # ships with an edit model by default
+# klein serves multi-reference editing from the BASE pipeline (`image` takes a list of
+# PIL images): there is no separate edit repo to configure, so refs are ALWAYS available.
+OMNI_DEFAULT = (os.environ.get("KLEIN_MODEL")
+                or "black-forest-labs/FLUX.2-klein-4B")
+
+# klein-4B is step-wise distilled: diffusers ignores `guidance_scale` (measured
+# bit-identical renders from 1.0 to 8.0, tests/test_klein_guidance.py) and the
+# Flux2Klein* pipelines expose no `negative_prompt`. A spec carrying `negative` is
+# therefore honoured with a WARNING, never silently - house rule.
+SUPPORTS_NEGATIVE = False
 
 
 def _omni_configured():
-    """Is an Omni model (multi-reference) available? CONFIG/env only - same
-    rule as cz_pipeline.OMNI_MODEL, without importing the pipeline (caps must
-    stay light)."""
-    if not OMNI_SUPPORTED:
-        return False
-    from cz_core import _prefs
-    return bool((os.environ.get("ZIMAGE_OMNI_MODEL") or _prefs.get("zimage_omni_model")
-                 or CONFIG.get("zimage_omni_model") or OMNI_DEFAULT).strip())
+    """Multi-reference editing is NATIVE to the klein base pipeline - nothing to
+    configure, nothing to download separately. Always True (kept as a function so
+    the caps block and any upstream merge stay structurally identical)."""
+    return OMNI_SUPPORTED
 
 
 def instance_url():
@@ -184,12 +189,12 @@ def caps_dict():
             "version": APP_VERSION, "ops": list(OPS),
             "supports": {"loras": True, "refs": _omni_configured(),
                          "max_refs": MAX_REFS, "seed": True,
-                         "negative": True, "arbitrary_size": True,
+                         "negative": SUPPORTS_NEGATIVE, "arbitrary_size": True,
                          "faces": _faces_available(),
                          "detail_faces": _faces_available(),
                          "detail_hands": _hands_available(),
                          "edit": _omni_configured(),
-                         "edit_presets": _omni_configured(),
+                         "edit_presets": bool(_edit_lora_catalog()),
                          "inpaint": FAMILY_CAPS["inpaint"],
                          "img2img": FAMILY_CAPS["img2img"]},
             "model_loaded": _model_loaded(),
@@ -200,7 +205,7 @@ def caps_dict():
             # input + 1 ref (spec.refs). Listage leger, rien n'est telecharge.
             "edit_loras": _edit_lora_catalog(),
             # Modes rapides acceptes par spec.fast sur l'op edit.
-            "edit_fast": ["off", "auto", "lightning-4", "lightning-8"]}
+            "edit_fast": ["off"]}      # klein: deja distille, rien a accelerer
 
 
 def _edit_lora_catalog():
@@ -366,6 +371,12 @@ def validate_spec(spec, op="gen"):
                 raise SpecError("'denoise' out of range (0-1)")
         out["denoise"] = den
     out["negative"] = str(spec.get("negative") or "").strip()
+    if out["negative"] and not SUPPORTS_NEGATIVE:
+        # klein est step-wise distilled: pas de CFG -> pas de negative prompt. On le dit
+        # au lieu de le laisser croire qu'il agit (degradation annoncee, jamais silencieuse).
+        warnings.append("'negative' ignored: klein is a distilled model (no CFG, "
+                        "no negative_prompt) - see supports.negative")
+        out["negative"] = ""
     for key, default in (("width", 1024), ("height", 1024)):
         try:
             v = int(spec.get(key) or default)
@@ -395,15 +406,19 @@ def validate_spec(spec, op="gen"):
                 raise SpecError("invalid 'guidance'")
         else:
             warnings.append("'guidance' not applied (v1: instance settings win)")
+    if spec.get("guidance") is not None:
+        warnings.append("'guidance' has no effect on klein: the model is step-wise "
+                        "distilled and diffusers ignores guidance_scale")
     refs = [str(r) for r in (spec.get("refs") or []) if str(r).strip()]
-    if refs and not _omni_configured():
-        warnings.append(f"{len(refs)} ref(s) ignored: no omni model "
-                        f"configured (set zimage_omni_model) - character "
-                        f"consistency by refs is OFF")
+    # Pas de branche "refs droppees" ici: chez klein le multi-reference est natif au
+    # pipeline de base, _omni_configured() est toujours vrai. La branche de l'amont est
+    # conservee sous forme d'assertion douce pour que le merge depuis qwen/main soit lisible.
+    if refs and not _omni_configured():          # pragma: no cover - impossible chez klein
+        warnings.append(f"{len(refs)} ref(s) ignored: multi-reference unavailable")
         refs = []
     if len(refs) > MAX_REFS:
         warnings.append(f"{len(refs)} refs, keeping the first {MAX_REFS} "
-                        f"(omni pipeline limit)")
+                        f"(klein pipeline limit)")
         refs = refs[:MAX_REFS]
     for r in refs:
         if not os.path.isfile(r):

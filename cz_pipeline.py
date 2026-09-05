@@ -1,19 +1,28 @@
-"""crispz-qwen-edit - coeur Qwen-Image (diffusers, BF16): chargement des pipelines
-(txt2img / img2img / inpaint) + edition par instruction (onglet Omni/Edit), LoRA /
+"""crispz-klein - coeur FLUX.2 Klein (diffusers, BF16): chargement des pipelines
+(txt2img / img2img / inpaint) + edition multi-reference (onglet Omni/Edit) + LoRA /
 checkpoints / transformer, generation et orchestration (generate / txt2img_run /
 process_one / outpaint / inpaint) + l'etat mutable runtime.
 
-Fork de crispz-studio (Z-Image). Mapping :
-  - base txt2img             -> QwenImagePipeline
-  - img2img (refine/upscale) -> QwenImageImg2ImgPipeline
-  - inpaint / reframe        -> QwenImageInpaintPipeline
-  - onglet Omni/Edit         -> QwenImageEditPlusPipeline (modele SEPARE, multi-images,
-                                defaut 'Qwen/Qwen-Image-Edit-2509') via generate_omni.
-Tous les pipelines Qwen utilisent un VRAI CFG (`true_cfg_scale`) + negative_prompt ; le
-curseur "guidance" de l'UI pilote donc true_cfg_scale (cf. _cfg / _qwen_call), et le
-`guidance_scale` distille reste a 1.0. L'API publique du module reste identique a
-l'upstream (memes noms, ex. ZIMAGE_TRANSFORMER, generate_omni, SAMPLER_CHOICES) pour ne
-casser ni cz_ui ni cz_cli.
+Fork de crispz-qwen-edit (Qwen-Image). Mapping :
+  - base txt2img             -> Flux2KleinPipeline
+  - onglet Omni/Edit         -> Flux2KleinPipeline  (MEME objet: `image` accepte une
+                                LISTE de PIL -> multi-reference natif, pas de 2e modele)
+  - inpaint / reframe        -> Flux2KleinInpaintPipeline
+  - img2img (refine/upscale) -> Flux2KleinInpaintPipeline + masque BLANC plein
+                                (le pipeline base n'expose PAS `strength`)
+
+klein-4B est DISTILLE (`is_distilled: true`). Mesure du 2026-09-05 (tests/
+test_klein_guidance.py, RTX 5090): guidance_scale 1.0 / 4.0 / 8.0 -> images
+bit-a-bit identiques (MAE 0.0000), diffusers emettant lui-meme "Guidance scale
+is ignored for step-wise distilled models". Il n'y a donc NI CFG NI negative
+prompt utilisables: `_cfg` renvoie {} et le protocole annonce
+supports.negative = False. Le curseur "guidance" de l'UI est conserve (contrat
+d'API cz_ui) mais n'a aucun effet sur le rendu.
+
+L'API publique du module reste identique a l'amont (memes noms, ex.
+ZIMAGE_TRANSFORMER, generate_omni, OMNI_MODEL, SAMPLER_CHOICES) pour ne casser ni
+cz_ui ni cz_cli ni cz_protocol. Les symboles "omni" survivent mais pointent
+desormais sur le MEME modele que le base.
 
 app lit l'etat courant via cz_pipeline.NAME (BASE_REPO, ZIMAGE_TRANSFORMER, ...) et pose
 cz_pipeline._PROGRESS / cz_pipeline._STOP depuis les handlers UI.
@@ -38,12 +47,14 @@ from cz_core import (
     _prefs, _is_single_file, _log, _dbg,
 )
 
-# Modele Qwen de base (txt2img/img2img/inpaint). Surcharge via env ZIMAGE_MODEL (compat)
-# ou QWEN_MODEL, ou prefs. Repo public.
-DEFAULT_BASE_REPO = (os.environ.get("QWEN_MODEL") or "Qwen/Qwen-Image")
-# Modele d'edition par instruction (onglet Omni/Edit), charge separement. 2509 = revision
-# recente, multi-images. Surcharge via env ZIMAGE_OMNI_MODEL / QWEN_EDIT_MODEL ou config.
-DEFAULT_OMNI_REPO = (os.environ.get("QWEN_EDIT_MODEL") or "Qwen/Qwen-Image-Edit-2509")
+# Modele FLUX.2 Klein de base (txt2img/img2img/inpaint/edit). Surcharge via env
+# ZIMAGE_MODEL (compat) ou KLEIN_MODEL, ou prefs. Repo public, Apache 2.0.
+# ATTENTION: ne PAS basculer sur FLUX.2-klein-9B (licence non commerciale), cf. FORK.md.
+DEFAULT_BASE_REPO = (os.environ.get("KLEIN_MODEL") or "black-forest-labs/FLUX.2-klein-4B")
+# L'edition multi-reference n'a PAS de modele separe chez klein: `image` du pipeline de
+# base accepte une liste de PIL. Le defaut "omni" est donc le modele de base lui-meme
+# (le symbole survit pour cz_ui / cz_protocol, cf. docstring).
+DEFAULT_OMNI_REPO = DEFAULT_BASE_REPO
 from cz_esrgan import load_esrgan, esrgan_upscale
 from cz_imageio import _now_stamp
 
@@ -159,10 +170,10 @@ for _spec in (CONFIG.get("default_loras") or []):
         _p = resolve_lora_path(_nm)
         if os.path.isfile(_p):
             LORAS.append((_p, float(_w)))
-# Modele Omni/Edit (Qwen-Image-Edit, multi-images). Defaut = DEFAULT_OMNI_REPO pour que
-# l'onglet Edit marche sans config. Reglable via config.txt (zimage_omni_model) ou l'UI.
-OMNI_MODEL = (os.environ.get("ZIMAGE_OMNI_MODEL") or _prefs.get("zimage_omni_model")
-              or CONFIG.get("zimage_omni_model") or DEFAULT_OMNI_REPO).strip()
+# Modele Omni/Edit. Chez klein il n'y a PAS de second modele: l'edition multi-reference
+# est servie par le pipeline de base. OMNI_MODEL suit donc BASE_REPO et existe surtout
+# pour que cz_ui / cz_protocol gardent leur contrat (toujours non vide -> edit dispo).
+OMNI_MODEL = BASE_REPO
 
 # Caches process-wide. Un pipeline "base" (txt2img ZImagePipeline) detient les
 # composants; img2img / inpaint en derivent via from_pipe -> poids partages, pas de
@@ -196,11 +207,12 @@ OFFLOAD_MODE = (os.environ.get("CZ_OFFLOAD") or CONFIG.get("default_cpu_offload"
 if OFFLOAD_MODE not in OFFLOAD_CHOICES:
     OFFLOAD_MODE = "none"
 
-# Guidance Qwen-Image. Le curseur "guidance" de l'UI = `true_cfg_scale` (vrai CFG, qui
-# active le negative prompt). Plage conseillee ~3-5 (defaut 4.0). Le `guidance_scale`
-# distille du pipeline reste a 1.0 (cf. _cfg). Un 0 herite d'une config Z-Image retombe
-# sur 4.0. Override possible via env QWEN_CFG.
-GUIDANCE = float(os.environ.get("QWEN_CFG") or CONFIG.get("default_guidance") or 0) or 4.0
+# Guidance. klein-4B est DISTILLE: diffusers IGNORE guidance_scale (verifie, cf.
+# docstring + tests/test_klein_guidance.py -> images bit-a-bit identiques de 1.0 a 8.0).
+# La variable est conservee parce que cz_ui / cz_cli / cz_protocol la lisent et
+# l'affichent, mais _cfg() ne la transmet PLUS au pipeline: elle n'a aucun effet.
+# Override possible via env KLEIN_CFG (sans effet non plus, garde pour la symetrie).
+GUIDANCE = float(os.environ.get("KLEIN_CFG") or CONFIG.get("default_guidance") or 0) or 1.0
 
 # Force ratio (facon Fooocus) pour upscale/img2img: si defini, l'image d'ENTREE est
 # recadree au centre a ce ratio avant traitement (crop to fit). Vide = ratio natif preserve
@@ -311,30 +323,60 @@ def set_guidance(g):
 
 
 def _cfg(negative=None, guidance=None):
-    """kwargs CFG communs a tous les pipelines Qwen : `true_cfg_scale` = curseur guidance
-    de l'UI (vrai CFG, active le negative prompt), `guidance_scale` distille fixe a 1.0.
-    `guidance` = surcharge par appel (protocole edit: un modele distille veut 1.0 quand
-    le curseur global reste a 4.0)."""
-    g = float(GUIDANCE) if guidance is None else float(guidance)
-    # guidance_scale n'est plus passe: Qwen-Image n'est pas guidance-distilled, diffusers
-    # l'ignore (1.0 est deja sa valeur par defaut) et le signalait a chaque appel.
-    # true_cfg <= 1 = CFG coupe (Lightning/Rapid): le negative n'aurait aucun effet, on ne
-    # le transmet pas plutot que de laisser diffusers avertir qu'il est ignore.
-    return {"true_cfg_scale": g,
-            "negative_prompt": (negative or None) if g > 1.0 else None}
+    """kwargs CFG. Chez klein: AUCUN.
+
+    klein-4B est step-wise distilled -> diffusers ignore `guidance_scale` (mesure:
+    1.0 / 4.0 / 8.0 donnent des images bit-a-bit identiques, cf.
+    tests/test_klein_guidance.py) et les pipelines Flux2Klein* n'exposent PAS
+    `negative_prompt` (seulement `negative_prompt_embeds`, inutilisable sans CFG).
+
+    On renvoie donc {} plutot que de transmettre des kwargs sans effet ou de faire
+    avertir diffusers a chaque appel. La signature est conservee: tous les callsites
+    de l'amont (`**_cfg(negative)`) restent valides, et le negative eventuellement
+    fourni est ignore SILENCIEUSEMENT ici mais ANNONCE en amont par
+    cz_protocol (supports.negative = False + warning sur un spec qui en porte un)
+    -- regle maison: degradation annoncee, jamais silencieuse."""
+    if negative:
+        _dbg("negative prompt ignore: klein est distille (ni CFG ni negative_prompt)")
+    return {}
 
 
 def _qwen_call(pipe, **kw):
-    """Appelle un pipeline Qwen en tolerant les variations d'API diffusers : si la version
-    installee ne connait pas `true_cfg_scale` / `negative_prompt`, on retire ces kwargs et
-    on relance plutot que de crasher la generation."""
+    """Appelle un pipeline Flux2Klein en absorbant les deux ecarts d'API avec l'amont.
+
+    1. Masque blanc implicite: `Flux2KleinPipeline` n'expose PAS `strength`, donc
+       l'img2img passe par `Flux2KleinInpaintPipeline`. Un appel qui porte `image` +
+       `strength` SANS `mask_image` est un img2img -> on injecte un masque
+       entierement BLANC (tout est redessine) de la taille de l'image.
+    2. Kwargs CFG residuels: si un callsite (ou un merge amont) repasse
+       `true_cfg_scale` / `negative_prompt`, on les retire et on relance au lieu de
+       crasher la generation.
+
+    Le nom `_qwen_call` est conserve pour limiter la surface de conflit au merge
+    depuis `qwen/main` (une trentaine de callsites)."""
+    # guidance_scale: klein est distille -> diffusers IGNORE toute valeur > 1.0 et
+    # log un warning a CHAQUE appel. On passe donc explicitement 1.0 (= pas de CFG,
+    # la verite du modele) pour taire le bruit. Si un jour un checkpoint FLUX.2 NON
+    # distille est charge, is_distilled est faux et on transmet le curseur de l'UI,
+    # qui redevient un vrai CFG.
+    if "guidance_scale" not in kw:
+        try:
+            distilled = bool(getattr(pipe.config, "is_distilled", False))
+        except Exception:
+            distilled = True
+        kw["guidance_scale"] = 1.0 if distilled else float(GUIDANCE)
+    if "strength" in kw and kw.get("image") is not None and "mask_image" not in kw:
+        img = kw["image"]
+        ref = img[0] if isinstance(img, (list, tuple)) else img
+        kw["mask_image"] = Image.new("L", ref.size, 255)
+        _dbg(f"img2img -> inpaint pipeline + masque blanc plein {ref.size}")
     try:
         return pipe(**kw)
     except TypeError as e:
         if any(k in kw for k in ("true_cfg_scale", "negative_prompt")):
             for k in ("true_cfg_scale", "negative_prompt"):
                 kw.pop(k, None)
-            _dbg(f"qwen call: retry sans kwargs CFG ({e})")
+            _dbg(f"klein call: retry sans kwargs CFG ({e})")
             return pipe(**kw)
         raise
 
@@ -517,7 +559,7 @@ def request_stop():
 
 
 def set_zimage_model(repo_or_path):
-    """Change le modele Qwen. Un repo HF / dossier diffusers -> BASE_REPO.
+    """Change le modele Klein. Un repo HF / dossier diffusers -> BASE_REPO.
     Un fichier single-file (.safetensors Civitai, .gguf) -> transformer override."""
     global BASE_REPO, ZIMAGE_TRANSFORMER
     if not repo_or_path:
@@ -527,12 +569,12 @@ def set_zimage_model(repo_or_path):
         # uniquement le transformer (VAE + encodeur texte gardes en VRAM).
         if repo_or_path != ZIMAGE_TRANSFORMER:
             ZIMAGE_TRANSFORMER = repo_or_path
-            _log("Qwen transformer (single-file) changed -> transformer swap on next run")
+            _log("Klein transformer (single-file) changed -> transformer swap on next run")
     elif repo_or_path != BASE_REPO:
         # Le repo de base change: VAE/encodeur/tokenizer changent aussi -> reload complet.
         BASE_REPO = repo_or_path
         free_vram()
-        _log("Qwen base repo changed -> will reload")
+        _log("Klein base repo changed -> will reload")
 
 
 def set_zimage_transformer(path):
@@ -544,7 +586,7 @@ def set_zimage_transformer(path):
     path = path or None
     if path != ZIMAGE_TRANSFORMER:
         ZIMAGE_TRANSFORMER = path
-        _log(f"Qwen transformer -> {path or '(repo de base)'} "
+        _log(f"Klein transformer -> {path or '(repo de base)'} "
              "-> transformer swap on next run (base components kept)")
 
 
@@ -640,10 +682,16 @@ def _safetensors_dequant(path):
 # Marqueurs de cles du transformer Qwen-Image (layout original OU prefixe ComfyUI):
 # utilises par le loader dequant pour refuser un checkpoint quantifie d'une AUTRE
 # architecture (il chargerait des poids incoherents).
-_QWEN_KEY_MARKERS = ("transformer_blocks.", "img_in", "txt_in", "time_text_embed")
+# Marqueurs de cles propres a Flux2Transformer2DModel (releves sur le transformer de
+# FLUX.2-klein-4B: 169 tenseurs, prefixes transformer_blocks / single_transformer_blocks /
+# x_embedder / context_embedder / double_stream_modulation_* / time_guidance_embed).
+# Le nom _QWEN_KEY_MARKERS est conserve pour limiter la surface de conflit au merge
+# depuis qwen/main -- seul le CONTENU change.
+_QWEN_KEY_MARKERS = ("single_transformer_blocks.", "double_stream_modulation",
+                     "x_embedder", "context_embedder")
 
 # Prefixe ComfyUI/LDM des checkpoints diffusion single-file. diffusers 0.39 mappe
-# QwenImageTransformer2DModel avec une fonction IDENTITE (aucune conversion de cles):
+# Flux2Transformer2DModel avec une fonction IDENTITE (aucune conversion de cles):
 # le state dict doit donc arriver AU LAYOUT DIFFUSERS, prefixe retire. Sinon toutes les
 # cles sont "unexpected", aucun poids n'est charge, le modele reste sur 'meta' et
 # dispatch_model casse sur "Cannot copy out of meta tensor; no data!".
@@ -822,8 +870,8 @@ def _load_dequant_state_dict(path):
     if not any(any(m in k[len(prefix):] for m in _QWEN_KEY_MARKERS) for k, _ in entries):
         raise RuntimeError(
             f"{os.path.basename(path)}: quantized checkpoint does not look like a "
-            "Qwen-Image transformer (different architecture); this build only loads "
-            "Qwen-Image models.")
+            "FLUX.2 transformer (different architecture); this build only loads "
+            "FLUX.2 Klein models.")
     # Lecture SEQUENTIELLE dans l'ordre PHYSIQUE du fichier (data_offsets): un HDD
     # s'effondre en acces aleatoire, et l'ordre des cles ne suit pas celui des donnees.
     entries.sort(key=lambda kv: kv[1].get("data_offsets", [0])[0])
@@ -1265,74 +1313,35 @@ def set_edit_loras_enabled(on):
 
 
 def set_omni_model(repo):
-    """Definit le modele Omni/Edit (repo HF ou dossier). Invalide le pipe omni."""
-    global OMNI_MODEL, _APPLIED_EDIT_LORAS
-    repo = (repo or "").strip()
-    if repo != OMNI_MODEL:
-        OMNI_MODEL = repo
-        _DERIVED.pop("omni", None)
-        _APPLIED_EDIT_LORAS = []
-        _log(f"Omni model -> {repo or '(none)'}")
+    """No-op chez klein: l'edition multi-reference est servie par le pipeline de BASE,
+    il n'y a pas de modele d'edition separe a choisir. La fonction survit parce que
+    cz_ui la cable sur le dropdown 'Omni model' (contrat d'API amont); elle se contente
+    de reamorcer OMNI_MODEL sur BASE_REPO et de le journaliser.
+    Pour changer le modele d'edition chez klein, on change le modele tout court
+    (set_zimage_model / dropdown Checkpoint)."""
+    global OMNI_MODEL
+    OMNI_MODEL = BASE_REPO
+    if (repo or "").strip() and (repo or "").strip() != BASE_REPO:
+        _log(f"Omni model ignore ({repo}): klein edite avec le modele de base "
+             f"({BASE_REPO}). Change le checkpoint pour changer l'editeur.")
 
 
 def list_edit_models():
-    """Modeles d'EDITION locaux (chemins complets) dans les dossiers checkpoints: fichiers
-    single-file (.gguf / .safetensors) dont le nom contient 'edit', 'aio' ou 'rapid'
-    (Qwen-Image-Edit 2509/2511, Rapid-AIO), hors LoRA egarees et formats non charges.
-    Alimente le dropdown 'Omni model' (le texte libre reste possible)."""
-    out, seen = [], set()
-    for d in _checkpoint_dirs():
-        if not os.path.isdir(d):
-            continue
-        for f in sorted(os.listdir(d), key=str.lower):
-            low = f.lower()
-            if not low.endswith((".gguf", ".safetensors")) or f in seen:
-                continue
-            if not any(k in low for k in ("edit", "aio", "rapid")):
-                continue
-            # encodeur texte (Qwen2.5-VL) / VAE ranges a cote: pas des transformers
-            if any(k in low for k in ("qwen25vl", "qwen2.5", "qwen2_5", "text_encoder",
-                                      "textencoder", "vae", "clip")):
-                continue
-            p = os.path.join(d, f)
-            if low.endswith(".safetensors") and _safetensors_unsupported(p):
-                continue           # LoRA Lightning d'edition rangee la, SVDQuant...
-            seen.add(f)
-            out.append(p)
-    return out
+    """Modeles d'EDITION disponibles. Chez klein l'editeur EST le modele de base, donc
+    tout checkpoint klein chargeable fait l'affaire: on renvoie la meme liste que les
+    checkpoints (le dropdown 'Omni model' de cz_ui reste alimente et coherent)."""
+    return list_checkpoints()
 
 
 def check_omni_available():
-    """Onglet Edit = Qwen-Image-Edit (modele d'edition par instruction). Verifie que le
-    repo d'edition configure existe sur Hugging Face (API publique)."""
-    import urllib.request
-    repo = (OMNI_MODEL or DEFAULT_OMNI_REPO).strip()
-    looks_local = (repo.lower().endswith((".gguf", ".safetensors")) or os.path.isdir(repo)
-                   or os.path.isabs(repo))
-    if looks_local:
-        # Fichier/dossier LOCAL: rien a verifier sur le Hub. Seul le reste du pipe
-        # (encodeur texte, VAE) vient du repo de base au premier usage.
-        if os.path.exists(repo):
-            base_edit = (os.environ.get("QWEN_EDIT_BASE") or CONFIG.get("zimage_omni_base")
-                         or DEFAULT_OMNI_REPO).strip()
-            kind = "GGUF" if _is_gguf_path(repo) else "single-file"
-            rev = "2511" if "2511" in repo else "2509"
-            return (f"**Edit model ready (local {kind}, {rev}):** `{repo}` "
-                    f"({os.path.getsize(repo) / 1024**3:.1f} GB). Text encoder / VAE come "
-                    f"from `{base_edit}` on first use.")
-        return f"Edit model `{repo}` **not found on disk**. Fix config.txt `zimage_omni_model`."
-    try:
-        req = urllib.request.Request("https://huggingface.co/api/models/" + repo,
-                                     headers={"User-Agent": "crispz-qwen-edit"})
-        with urllib.request.urlopen(req, timeout=8) as r:
-            if r.status == 200:
-                return (f"**Edit model ready:** `{repo}`. The Edit tab edits an input image "
-                        "from an instruction prompt. Change it in config.txt "
-                        "`zimage_omni_model` (or the Models tab).")
-    except Exception:
-        pass
-    return (f"Edit model `{repo}` not reachable (network/HF). It downloads on first use of "
-            "the Edit tab. Override via config.txt `zimage_omni_model`.")
+    """Chez klein, l'edition multi-reference est NATIVE au pipeline de base: elle est
+    disponible des que le modele est chargeable, sans second telechargement ni repo a
+    verifier sur le Hub. Renvoie donc toujours un message pret (le contrat cz_ui veut
+    une chaine markdown)."""
+    return (f"**Edit ready (native):** `{BASE_REPO}` handles multi-reference editing in "
+            f"the SAME pipeline as txt2img (up to 4 refs) - no second model, no extra "
+            f"VRAM. Note: klein is distilled, so **negative prompts and CFG have no "
+            f"effect** (see FORK.md).")
 
 
 def set_offload_mode(mode):
@@ -1486,7 +1495,7 @@ def _load_transformer(path=None, base=None):
     path/base: par defaut le transformer du BASE (ZIMAGE_TRANSFORMER / BASE_REPO);
     le pipe d'EDITION passe son propre fichier (GGUF, FP8 Rapid-AIO...) + son repo
     d'edition (zimage_omni_base) pour l'architecture."""
-    from diffusers import QwenImageTransformer2DModel
+    from diffusers import Flux2Transformer2DModel
     path = ZIMAGE_TRANSFORMER if path is None else path
     base = BASE_REPO if base is None else base
     if path:
@@ -1505,12 +1514,12 @@ def _load_transformer(path=None, base=None):
                     raise RuntimeError(
                         f"{os.path.basename(path)}: {lay}.")
                 from diffusers import GGUFQuantizationConfig
-                _log(f"loading Qwen transformer (GGUF, quantized): {path} ...")
+                _log(f"loading Klein transformer (GGUF, quantized): {path} ...")
                 # config/subfolder = archi du transformer depuis le repo de base (cache),
                 # sinon from_single_file ne sait pas la structure et tente un repo par defaut.
                 return _load_monitor(
                     f"transformer {os.path.basename(path)} (GGUF)",
-                    lambda: QwenImageTransformer2DModel.from_single_file(
+                    lambda: Flux2Transformer2DModel.from_single_file(
                         path,
                         quantization_config=GGUFQuantizationConfig(compute_dtype=DTYPE),
                         config=base, subfolder="transformer",
@@ -1524,7 +1533,7 @@ def _load_transformer(path=None, base=None):
                 # tout le fichier (minutes sur HDD).
                 cached = _dequant_cache_path(path)
                 if cached and os.path.isfile(cached):
-                    _log(f"loading Qwen transformer ({dq} -> bf16, from dequant "
+                    _log(f"loading Klein transformer ({dq} -> bf16, from dequant "
                          f"cache): {os.path.basename(cached)}")
                     try:
                         os.utime(cached, None)       # marque l'usage pour le LRU
@@ -1532,16 +1541,16 @@ def _load_transformer(path=None, base=None):
                         pass
                     return _load_monitor(
                         f"transformer {os.path.basename(path)} (cached bf16)",
-                        lambda: QwenImageTransformer2DModel.from_single_file(
+                        lambda: Flux2Transformer2DModel.from_single_file(
                             cached, config=base, subfolder="transformer",
                             torch_dtype=DTYPE))
-                _log(f"loading Qwen transformer (single-file, {dq} ComfyUI -> "
+                _log(f"loading Klein transformer (single-file, {dq} ComfyUI -> "
                      f"dequantized to bf16): {path} ...")
                 sd = _load_dequant_state_dict(path)
                 _dequant_cache_store(path, sd)
                 return _load_monitor(
                     f"transformer {os.path.basename(path)} ({dq})",
-                    lambda: QwenImageTransformer2DModel.from_single_file(
+                    lambda: Flux2Transformer2DModel.from_single_file(
                         sd, config=base, subfolder="transformer",
                         torch_dtype=DTYPE))
             # checkpoint Qwen single-file (.safetensors bf16/fp16) -> override transformer.
@@ -1555,30 +1564,30 @@ def _load_transformer(path=None, base=None):
                 # from_single_file charge de toute facon tout le checkpoint. Pas de cache
                 # disque ici: il n'y a rien de dequantifie a memoriser, ce serait une
                 # copie bf16 -> bf16.
-                _log(f"loading Qwen transformer (single-file, ComfyUI layout -> "
+                _log(f"loading Klein transformer (single-file, ComfyUI layout -> "
                      f"diffusers): {path} ...")
                 sd = _load_dequant_state_dict(path)
                 return _load_monitor(
                     f"transformer {os.path.basename(path)}",
-                    lambda: QwenImageTransformer2DModel.from_single_file(
+                    lambda: Flux2Transformer2DModel.from_single_file(
                         sd, config=base, subfolder="transformer",
                         torch_dtype=DTYPE))
-            _log(f"loading Qwen transformer (single-file): {path} ...")
+            _log(f"loading Klein transformer (single-file): {path} ...")
             return _load_monitor(
                 f"transformer {os.path.basename(path)}",
-                lambda: QwenImageTransformer2DModel.from_single_file(
+                lambda: Flux2Transformer2DModel.from_single_file(
                     path, config=base, subfolder="transformer",
                     torch_dtype=DTYPE))
         # repo HF / dossier diffusers -> charge le sous-dossier 'transformer'.
-        _log(f"loading Qwen transformer (repo subfolder): {path} ...")
+        _log(f"loading Klein transformer (repo subfolder): {path} ...")
         return _load_monitor(
             f"transformer {path}",
-            lambda: QwenImageTransformer2DModel.from_pretrained(
+            lambda: Flux2Transformer2DModel.from_pretrained(
                 path, subfolder="transformer", torch_dtype=DTYPE))
-    _log(f"loading Qwen transformer (base repo): {base} ...")
+    _log(f"loading Klein transformer (base repo): {base} ...")
     return _load_monitor(
         f"transformer {base}",
-        lambda: QwenImageTransformer2DModel.from_pretrained(
+        lambda: Flux2Transformer2DModel.from_pretrained(
             base, subfolder="transformer", torch_dtype=DTYPE))
 
 
@@ -1776,16 +1785,16 @@ def _ensure_base():
             return _BASE_PIPE
         _dbg("base pipeline: key changed -> free + reload")
         free_vram()
-    from diffusers import QwenImagePipeline
+    from diffusers import Flux2KleinPipeline
     t0 = time.time()
     kwargs = {}
     if ZIMAGE_TRANSFORMER:
         kwargs["transformer"] = _load_transformer()
-    _log(f"loading Qwen-Image base: {BASE_REPO} (offload={OFFLOAD_MODE}, dtype=bf16) ... "
-         "first time downloads from HF (~20B, large), then cached")
-    pipe = _load_monitor(f"Qwen-Image base {BASE_REPO}",
-                         lambda: QwenImagePipeline.from_pretrained(BASE_REPO, torch_dtype=DTYPE,
-                                                                   **kwargs))
+    _log(f"loading FLUX.2 Klein base: {BASE_REPO} (offload={OFFLOAD_MODE}, dtype=bf16) ... "
+         "first time downloads from HF (~15 Go), then cached")
+    pipe = _load_monitor(f"FLUX.2 Klein base {BASE_REPO}",  # noqa: E128
+                         lambda: Flux2KleinPipeline.from_pretrained(BASE_REPO, torch_dtype=DTYPE,
+                                                                    **kwargs))
     # Capture le config natif (flow-matching) du scheduler -> base pour construire les
     # autres samplers (euler/dpm2a/dpmpp2m) sans perdre shift/flow params.
     try:
@@ -1832,7 +1841,7 @@ def _ensure_base():
     _BASE_PIPE = pipe
     _DERIVED = {"txt2img": pipe}
     _LOADED_KEY = key
-    _log(f"Qwen-Image base ready in {time.time() - t0:.1f}s (sampler={SAMPLER}/{SCHEDULE})")
+    _log(f"FLUX.2 Klein base ready in {time.time() - t0:.1f}s (sampler={SAMPLER}/{SCHEDULE})")
     return pipe
 
 
@@ -1841,20 +1850,27 @@ def get_pipe(kind="img2img"):
     from_pipe (poids partages). Omni a besoin de composants en plus (SigLIP) ->
     charge separement depuis un modele Omni dedie (CONFIG['zimage_omni_model'])."""
     if kind == "omni":
-        # Qwen-Image-Edit est un modele SEPARE: ne PAS charger le base (txt2img,
-        # ~8 min + RAM/VRAM en double) juste pour editer une image.
-        if "omni" in _DERIVED:
-            _dbg("get_pipe('omni'): reuse derived")
-            return _DERIVED["omni"]
-        return _load_omni()
+        # klein: l'edition multi-reference EST le pipeline de base (`image` accepte une
+        # liste de PIL). Aucun second modele a charger -> pas de VRAM en double.
+        _dbg("get_pipe('omni'): pipeline de base (multi-reference natif)")
+        return _ensure_base()
     base = _ensure_base()
     if kind in _DERIVED:
         _dbg(f"get_pipe('{kind}'): reuse derived")
         return _DERIVED[kind]
-    from diffusers import QwenImageImg2ImgPipeline, QwenImageInpaintPipeline
-    cls = {"img2img": QwenImageImg2ImgPipeline, "inpaint": QwenImageInpaintPipeline}.get(kind)
+    # `Flux2KleinPipeline` n'expose PAS `strength`: son `image` est un conditionnement de
+    # reference (facon Kontext), pas un depart bruite. L'img2img passe donc par le pipeline
+    # d'INPAINT avec un masque blanc plein (injecte par _qwen_call). Un seul objet derive
+    # sert les deux -> on le partage sous les deux clefs de cache.
+    from diffusers import Flux2KleinInpaintPipeline
+    cls = {"img2img": Flux2KleinInpaintPipeline, "inpaint": Flux2KleinInpaintPipeline}.get(kind)
     if cls is None:
         return base
+    twin = "inpaint" if kind == "img2img" else "img2img"
+    if twin in _DERIVED:
+        _dbg(f"get_pipe('{kind}'): reuse '{twin}' (meme pipeline Flux2KleinInpaint)")
+        _DERIVED[kind] = _DERIVED[twin]
+        return _DERIVED[kind]
     _log(f"deriving {kind} pipeline (shared weights, no extra VRAM)")
     # Un transformer GGUF est QUANTIFIE: on ne peut pas le recaster en dtype (.to(DTYPE)
     # leve "Casting a quantized model is unsupported"). On saute donc le recast bf16 dans
@@ -1893,95 +1909,18 @@ def get_pipe(kind="img2img"):
     return p
 
 
-def _load_omni():
-    """Charge le pipeline d'edition Qwen-Image-Edit (onglet Omni/Edit). Modele SEPARE du
-    base (defaut 'Qwen/Qwen-Image-Edit-2509', multi-images). 2509 -> QwenImageEditPlus ;
-    revision de base -> QwenImageEdit. Pipeline separe (ne partage pas avec le base)."""
-    global _DERIVED, _APPLIED_EDIT_LORAS
-    import diffusers
-    _APPLIED_EDIT_LORAS = []        # pipe neuf: aucun adaptateur d'edition pose dessus
-    repo = (OMNI_MODEL or os.environ.get("ZIMAGE_OMNI_MODEL")
-            or CONFIG.get("zimage_omni_model") or DEFAULT_OMNI_REPO).strip()
-    if not repo:
-        raise RuntimeError("No Qwen-Image-Edit model set (config.txt 'zimage_omni_model').")
-    EditPlus = getattr(diffusers, "QwenImageEditPlusPipeline", None)
-    t0 = time.time()
-    if _is_single_file(repo):
-        # Single-file: transformer d'edition local (GGUF quantifie ~13 Go, ou .safetensors
-        # FP8/bf16 type Rapid-AIO = 2511 + Lightning fusionnes) + le RESTE (encodeur texte
-        # ~17 Go, VAE, processor) tire du repo d'edition de base (zimage_omni_base, defaut
-        # Qwen-Image-Edit-2509). Fait tenir l'edition en VRAM 32 Go, sans le transformer 40 Go.
-        import importlib, json as _json
-        from huggingface_hub import hf_hub_download
-        base_edit = (os.environ.get("QWEN_EDIT_BASE") or CONFIG.get("zimage_omni_base")
-                     or DEFAULT_OMNI_REPO).strip()
-        EditCls = EditPlus or diffusers.QwenImageEditPipeline
-        _log(f"loading Qwen-Image-Edit transformer (single-file): {repo} + base {base_edit} "
-             f"via {EditCls.__name__} (offload={OFFLOAD_MODE}) ...")
-        # Transformer depuis le fichier (archi tiree du repo de base, pas de download du
-        # transformer bf16): meme loader que le base (GGUF, FP8/INT8 scaled dequantifie +
-        # cache disque, layout ComfyUI). NB: from_pretrained(base, transformer=tf)
-        # telechargerait QUAND MEME le transformer 40 Go du repo -> on construit donc le
-        # pipeline composant par composant. Les classes viennent du model_index.json.
-        tf = _load_transformer(repo, base_edit)
-        mi = _json.load(open(hf_hub_download(base_edit, "model_index.json"), encoding="utf-8"))
-        comps = {"transformer": tf}
-        for name in ("scheduler", "vae", "text_encoder", "tokenizer", "processor"):
-            spec = mi.get(name)
-            if not (isinstance(spec, list) and len(spec) == 2):
-                continue
-            lib, cls_name = spec
-            Cls = getattr(importlib.import_module(lib), cls_name)
-            kw = {"torch_dtype": DTYPE} if name in ("vae", "text_encoder") else {}
-            # Charge UNIQUEMENT ce sous-dossier (encodeur ~17 Go, VAE...) ; le transformer
-            # 40 Go du repo n'est jamais telecharge.
-            comps[name] = Cls.from_pretrained(base_edit, subfolder=name, **kw)
-        pipe = EditCls(**comps)
-    else:
-        # repo diffusers complet (telechargement). 2509 -> QwenImageEditPlusPipeline
-        # (multi-images) ; revision de base -> QwenImageEditPipeline. Repli automatique.
-        plus = "2509" in repo or "2511" in repo or "plus" in repo.lower()
-        EditCls = (EditPlus if plus else None) or diffusers.QwenImageEditPipeline
-        _log(f"loading Qwen-Image-Edit: {repo} via {EditCls.__name__} (offload={OFFLOAD_MODE}) ...")
-        try:
-            pipe = EditCls.from_pretrained(repo, torch_dtype=DTYPE)
-        except Exception as e:
-            alt = diffusers.QwenImageEditPipeline
-            if EditCls is alt:
-                raise
-            _log(f"{EditCls.__name__} failed ({e}); falling back to {alt.__name__}")
-            pipe = alt.from_pretrained(repo, torch_dtype=DTYPE)
-    # Meme regle que le base: un transformer GGUF ne va sur le GPU QUE via
-    # enable_model_cpu_offload (sinon il reste sur CPU: ~800 s/step observes).
-    _off = _effective_offload(repo)
-    if _off != OFFLOAD_MODE:
-        _log(f"GGUF edit: offload '{OFFLOAD_MODE}' force a '{_off}' (un GGUF ne tourne pas "
-             f"sur GPU en none/sequential -> sinon CPU, ~800s/step)")
-    if DEVICE == "cuda" and _off == "model":
-        pipe.enable_model_cpu_offload()
-    elif DEVICE == "cuda" and _off == "sequential":
-        pipe.enable_sequential_cpu_offload()
-    else:
-        pipe = pipe.to(DEVICE)
-    try:
-        pipe.vae.enable_slicing()
-        pipe.vae.enable_tiling()
-    except Exception as e:
-        _dbg(f"VAE tiling not available on edit pipe: {e}")
-    _DERIVED["omni"] = pipe
-    _log(f"Qwen-Image-Edit ready in {time.time() - t0:.1f}s")
-    return pipe
-
-
-@_gpu_serial
 def generate_omni(refs, prompt, negative, width, height, steps, seed,
                   guidance=None, honor_size=False, steps_explicit=False):
-    """Edition par instruction Qwen-Image-Edit: edite une (ou plusieurs, via 2509) image(s)
+    """Edition multi-reference FLUX.2 Klein: edite une (ou plusieurs, jusqu'a 4) image(s)
     d'entree selon le prompt d'instruction. Conserve la signature de l'upstream (cz_ui).
+
+    Chez klein c'est le pipeline de BASE qui edite (`image` accepte une liste de PIL):
+    pas de second modele, pas de VRAM en double, pas de temps de chargement supplementaire.
+    `negative` est accepte pour compat mais SANS EFFET (modele distille, cf. _cfg) -
+    cz_protocol l'annonce via supports.negative = False.
     width/height sont ignores par defaut (l'edition preserve les dimensions de l'entree);
-    honor_size=True les transmet au pipe (protocole edit avec taille explicite, ex. le
-    preset Upscaler qui veut une sortie 2x). guidance = surcharge du CFG global.
-    Les LoRA d'edition (EDIT_LORAS, case 'Edit LoRAs') sont posees a chaud ici."""
+    honor_size=True les transmet au pipe. Les LoRA d'edition (EDIT_LORAS, case
+    'Edit LoRAs') sont posees a chaud ici, sur le meme transformer que le base."""
     refs = [r.convert("RGB") for r in (refs or []) if r is not None]
     if not refs:
         raise ValueError("Edit needs at least one input image.")
@@ -2001,7 +1940,8 @@ def generate_omni(refs, prompt, negative, width, height, steps, seed,
     _progress(0.1, f"Editing ({len(refs)} image(s))...")
     _set_slicing(pipe, max(max(r.size) for r in refs))
     t0 = time.time()
-    # 2509/Plus accepte une liste d'images; la revision de base prend une seule image.
+    # Flux2KleinPipeline accepte `list[PIL] | PIL`: on passe la liste telle quelle des
+    # qu'il y a plus d'une reference.
     image_arg = refs if len(refs) > 1 else refs[0]
     size_kw = {}
     if honor_size and width and height:
