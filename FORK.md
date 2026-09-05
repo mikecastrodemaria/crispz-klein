@@ -12,9 +12,11 @@ d'omni, pas de single-file).
 - Remotes : `origin` = crispz-klein, `upstream` = crispz-studio, `qwen` = crispz-qwen-edit.
 - Base du fork : `3c128c8` (crispz-qwen-edit/main).
 
-> **État : portage fait et validé sur GPU** (RTX 5090, diffusers 0.39.0.dev0,
-> 2026-09-05). Les 4 ops du protocole v1 tournent, la suite de tests héritée passe
-> en entier. Restent : README/identité et le launcher Pinokio (cf. § État).
+> **État : portage fait, installé et validé de bout en bout** (RTX 5090, torch
+> 2.8.0+cu128, diffusers 0.39.0.dev0, 2026-09-05). Le fork a son propre `.venv`
+> (`install.bat`), les 4 ops du protocole v1 tournent, la suite héritée passe en
+> entier, et comics2crispz atteint le moteur par la route CLI. Reste le launcher
+> Pinokio (cf. § État).
 
 ## Mesures (RTX 5090, 1024×1024, 4 steps, bf16, offload none)
 
@@ -130,7 +132,16 @@ relevés). Nouveaux marqueurs : `single_transformer_blocks.`,
 `double_stream_modulation`, `x_embedder`, `context_embedder`. Le nom de la constante
 est gardé pour limiter la surface de conflit ; seul le contenu change.
 
-### E. L'API omni survit, elle ne disparaît PAS
+### E. `requirements-lock.txt` : `gguf` et `hf_xet` manquaient — *imprévu*
+
+Le lock hérité de crispz-studio omet explicitement `gguf` (« crispz-studio n'a pas de
+chemin de chargement GGUF »). C'est faux pour ce fork : `_load_transformer` a bien un
+chemin GGUF, hérité de qwen-edit et re-validé ici. Un `install.bat` **isolé** (qui lit
+le lock, pas `requirements.txt`) sortait donc un venv sans `gguf` → `test_quant_formats`
+en échec et un `.gguf` refusé à l'exécution. `hf_xet` manquait aussi (téléchargements HF
+en HTTP lent). Les deux sont ajoutés au lock avec leur version installée.
+
+### F. L'API omni survit, elle ne disparaît PAS
 
 **Correction du plan initial** : `cz_ui.py` et `cz_protocol.py` référencent ces
 symboles 20+ fois. Les supprimer casserait les deux. Ils sont donc **repointés**,
@@ -248,8 +259,25 @@ imposant des filtres de contenu. Ce fork cible le **4B** ; ne pas basculer
 - [x] Chemin single-file testé (checkpoint `.safetensors` de 7,2 Go chargé et rendu).
 - [x] Les 4 ops du protocole testées en `--local`.
 - [x] Suite héritée 13/13, `build_ui()` headless OK.
-- [ ] `requirements.txt` : figer une version diffusers minimale exposant `flux2`
-      (validé sur 0.39.0.dev0 ; le pin n'est pas encore posé).
-- [ ] Entrée `klein` dans `comics2crispz/config.json`.
-- [ ] README + identité (titres, captures).
+- [x] `requirements.txt` : le commit diffusers déjà épinglé (`de6b0495`) expose
+      `flux2` en 0.39.0.dev0 ; commentaires corrigés. `install.bat` CHECK_PIPE →
+      `Flux2KleinInpaintPipeline` (validé par install.bat lui-même).
+- [x] `requirements-lock.txt` : `gguf` + `hf_xet` ajoutés (§ E).
+- [x] `.venv` du fork installé (`install.bat`, 8,6 Go) ; `config.txt` généré depuis
+      le sample porte bien les défauts klein — le piège du clonage est clos par
+      construction.
+- [x] Suite héritée 13/13 et e2e revalidés **sur le venv du fork**.
+- [x] Entrée `klein` dans `comics2crispz/config.json` ; caps atteint par la route
+      CLI (`route: cli`, `crispz-klein 1.18.0`).
+- [x] README : en-tête et identité. Le corps garde encore la formulation
+      crispz-studio héritée (dette d'amont, pas introduite par ce portage).
+- [x] CHANGELOG 1.18.0, `APP_VERSION` bumpée.
 - [ ] Launcher Pinokio `crispz-klein.pinokio.git`.
+- [ ] README : réécrire le corps (dette héritée de crispz-studio).
+
+## Note d'exploitation
+
+La famille partage le port 7860 (décision v1 : « pas de port par outil »). Tant qu'une
+autre app crispz tourne, `caps` par l'URL renvoie CELLE-LÀ — comics2crispz le détecte
+(`tool_mismatch: True`) et `upscale`/`gen` refusent proprement. Pour utiliser klein,
+fermer l'autre app et lancer `run.bat`, ou passer par la route CLI (`--local`).
