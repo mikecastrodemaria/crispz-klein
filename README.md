@@ -1,13 +1,34 @@
-# crispz-studio
+# crispz-klein
 
-> Z-Image txt2img + upscaler/detailer studio (a Fooocus-style fork of
+> FLUX.2 Klein txt2img + multi-reference editing + upscaler/detailer studio
+> (fork of [crispz-qwen-edit](https://github.com/mikecastrodemaria/crispz-qwen-edit),
+> itself a Fooocus-style fork of
 > [crispz](https://github.com/mikecastrodemaria/crispz)).
-> Current version: **1.16.0** — see [CHANGELOG.md](CHANGELOG.md).
+> Current version: **1.17.0** — see [CHANGELOG.md](CHANGELOG.md).
 
-![crispz-studio — Z-Image creation + enhancement studio](assets/screenshot.png)
+![crispz-klein — FLUX.2 Klein creation + editing studio](assets/screenshot.png)
 
-A standalone Z-Image **creation + enhancement** tool, **100% local**, no ComfyUI /
-SwarmUI. On top of crispz's upscaler it adds:
+A standalone **FLUX.2 Klein** creation + editing tool, **100% local**, no ComfyUI /
+SwarmUI. Engine: [`black-forest-labs/FLUX.2-klein-4B`](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B)
+— 4B parameters, **Apache 2.0**, distilled to **4 steps**.
+
+**Why this fork.** One model covers the whole surface: `Flux2KleinPipeline` does
+txt2img *and* multi-reference editing (its `image` argument takes a list of PIL
+images), and `Flux2KleinInpaintPipeline` does inpaint *and* img2img. Measured on an
+RTX 5090: **14.9 GB of VRAM for everything**, 1024×1024 in **2.0 s**, an edit with one
+reference in 3.0 s. crispz-qwen-edit needs two 20B models for the same features.
+
+**Two things to know before using it.** klein-4B is step-wise distilled, so
+**negative prompts and the guidance slider have no effect** — verified, renders at
+guidance 1.0 / 4.0 / 8.0 are bit-identical (`tests/test_klein_guidance.py`). And the
+edit-LoRA catalogue is empty: the Qwen-Image-Edit presets of the upstream fork are
+incompatible with FLUX.2. Both are announced honestly in the CLI protocol
+(`supports.negative: false`, `edit_loras: []`). Full detail in [FORK.md](FORK.md).
+
+> ⚠️ Do **not** point this at `FLUX.2-klein-9B`: non-commercial licence. This fork
+> targets the **4B**, which is Apache 2.0.
+
+On top of crispz's upscaler it adds:
 
 - **Text → Image** (`ZImagePipeline`): generate from a prompt, with an optional
   **Upscale after generate** toggle (under the Generate button) that auto-chains each

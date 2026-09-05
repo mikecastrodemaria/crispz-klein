@@ -1,5 +1,6 @@
 # NE PAS reinstaller torch : garder ton build PyTorch 2.7 / CUDA 12.8 existant.
-# Z-Image n'est dans diffusers que depuis la source, d'ou le git+ ci-dessous.
+# Les pipelines FLUX.2 (Flux2KleinPipeline / Flux2KleinInpaintPipeline) ne sont dans
+# diffusers que depuis la source, d'ou le git+ ci-dessous.
 
 # ATTENTION : le commit est EPINGLE volontairement.
 # Un `git+.../diffusers` sans commit prend le HEAD du jour, ce qui n'est pas une
@@ -8,11 +9,15 @@
 # -> ResolutionImpossible a l'installation, pour tout le monde, du jour au
 # lendemain. Ce commit est celui sur lequel CE repo a ete valide (il differe
 # d'un fork a l'autre, cf. requirements-lock.txt).
+# Ce commit expose bien `diffusers.pipelines.flux2` (Flux2Pipeline, Flux2KleinPipeline,
+# Flux2KleinInpaintPipeline, Flux2KleinKVPipeline) en 0.39.0.dev0 - verifie le
+# 2026-09-05, portage complet valide dessus.
 # Pour tenter une version plus recente : remplacer le hash ci-dessous, relancer
 # install.bat, et verifier que `transformers` s'installe encore.
 git+https://github.com/huggingface/diffusers@de6b049539a07bda562c9b8c275e759aa52a3700
 
-# transformers >= 4.51 requis : Z-Image Turbo utilise un encodeur Qwen3 (Qwen3Model),
+# transformers >= 4.51 requis : FLUX.2 Klein utilise un encodeur texte Qwen3
+# (Qwen3ForCausalLM, cf. model_index.json du repo),
 # absent avant 4.51 (echec "module transformers has no attribute Qwen3Model").
 # Borne <5 : la ligne 5.x a des changements d'API qui peuvent casser le diffusers
 # source. Rester sur 4.51+ (teste OK en 4.57).
