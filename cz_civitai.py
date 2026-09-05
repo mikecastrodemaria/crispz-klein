@@ -1,4 +1,4 @@
-"""crispz-studio - CivitAI enrichment for the Asset Browser (previews / trigger words /
+"""crispz-klein - CivitAI enrichment for the Asset Browser (previews / trigger words /
 examples), inspired by Fooocus2026's civitai_api + model_indexer.
 
 Flow (per .safetensors):
@@ -25,7 +25,7 @@ import urllib.error
 from cz_core import _log, _dbg, CONFIG, _prefs
 
 CIVITAI_API = "https://civitai.com/api/v1"
-_UA = "crispz-studio/asset-browser"
+_UA = "crispz-klein/asset-browser"
 
 # Cle API CivitAI (optionnelle: previews gated/NSFW + anti rate-limit). Source: UI
 # (preferences.json) -> config.txt. Reglable a chaud via set_api_key().
@@ -184,7 +184,7 @@ def get_version_by_hash(sha, api_key=None):
 
 
 def _norm_base(s):
-    """'Z-Image', 'Z Image', 'zimage' -> 'zimage'. Les libelles de modele de base CivitAI
+    """'FLUX.2', 'Flux 2', 'flux2' -> 'flux2'. Les libelles de modele de base CivitAI
     varient en casse/espaces/tirets d'une version a l'autre -> comparaison tolerante."""
     return re.sub(r"[^a-z0-9]+", "", str(s or "").lower())
 
@@ -194,7 +194,7 @@ def get_latest_version(model_id, api_key=None, base_model=None, current_version_
     GET /models/<id> -> modelVersions[0] est la plus recente (l'API les trie du plus recent
     au plus ancien).
 
-    base_model (ex. 'Z-Image') restreint la recherche aux versions du MEME modele de base.
+    base_model (ex. 'FLUX.2') restreint la recherche aux versions du MEME modele de base.
     Beaucoup de pages CivitAI publient la suite d'un LoRA pour une AUTRE base (Krea2, Flux,
     SDXL...): ce n'est pas une mise a jour de notre fichier, qui ne tournerait pas dessus.
     Aucune version de la meme base -> None (pas d'update). Si l'API ne renseigne le
@@ -329,7 +329,7 @@ def map_sampler_name(name):
         sched = "sgm_uniform"
     samp = None
     if n.startswith("euler"):
-        samp = "euler"          # 'Euler a' -> euler (le plus proche chez Z-Image)
+        samp = "euler"          # 'Euler a' -> euler (le plus proche chez FLUX.2)
     elif "unipc" in n or n.startswith("uni"):
         samp = "unipc"
     elif "lcm" in n:

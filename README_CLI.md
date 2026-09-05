@@ -1,4 +1,4 @@
-# crispz-studio — CLI cheat sheet
+# crispz-klein — CLI cheat sheet
 
 All commands are `python app.py ...` (use your venv: `.venv\Scripts\python app.py ...`).
 Run `python app.py --help` for the full flag list. No args → launches the UI.
@@ -13,17 +13,17 @@ Common output flags (work with most modes):
 ## Text → Image (txt2img)
 
 ```bash
-# Basic (Z-Image Turbo: 8 steps, guidance 0)
+# Basic (FLUX.2 Klein: 4 steps; guidance is inert, the model is distilled)
 python app.py --txt2img --prompt "a serene mountain lake, cinematic" \
     --gen-width 1024 --gen-height 1024 --gen-steps 8 --seed 42 \
     --save-mode local --output-dir out
 
-# Z-Image Base / Juggernaut-Z (needs CFG)
+# NB: there is no 'Base' variant here and no working CFG - see README.md
 python app.py --txt2img --prompt "cinematic portrait of a sea captain" \
     --gen-width 960 --gen-height 1440 --gen-steps 24 --guidance 6 \
     --save-mode local --output-dir out
 
-# Generate then upscale in ONE command (txt2img chained into ESRGAN + Z-Image refine).
+# Generate then upscale in ONE command (txt2img chained into ESRGAN + diffusion refine).
 # This is the CLI equivalent of the UI's "Upscale after generate" checkbox.
 python app.py --txt2img --prompt "portrait of an old fisherman" --upscale \
     --factor 2 --denoise 0.30 -m 4x-ClearRealityV1_Soft.safetensors \
@@ -51,7 +51,7 @@ python app.py --txt2img --prompt "a red cat" \
 
 # Compare checkpoints (partial names resolve case-insensitively), one sheet per seed
 python app.py --txt2img --prompt "..." \
-    --xyz "Checkpoint=Z-Image-Turbo, intoreal" --xyz "Seed=42, 1234"
+    --xyz "Checkpoint=FLUX.2-klein-4B, mymodel" --xyz "Seed=42, 1234"
 
 # Full-prompt A/B test (each value = a COMPLETE prompt; quotes protect commas).
 # --prompt becomes optional when a Prompt axis is given.
@@ -81,19 +81,19 @@ In the UI, the values fields autosuggest after 3 typed characters (checkpoints/L
 on those axes, `__wildcards__` on the Prompt axes).
 **Ctrl+C assembles a partial sheet** with the cells rendered so far.
 
-## Choose / switch the Z-Image model
+## Choose / switch the Klein model
 
 ```bash
 # Single-file checkpoint (Civitai BF16/FP16) as the transformer
 python app.py --txt2img --prompt "..." \
-    --zimage-transformer "D:/.../Z-Image/Juggernaut_Z_V1_bf16.safetensors" --guidance 6 --gen-steps 24
+    --zimage-transformer "D:/.../FLUX2/my_klein_finetune.safetensors" --gen-steps 4
 
 # Transformer from a diffusers repo/folder (keeps base VAE/encoder)
 python app.py --txt2img --prompt "..." \
-    --zimage-transformer "RunDiffusion/Juggernaut-Z-Image" --guidance 6
+    --zimage-transformer "<hf-repo-with-a-flux2-transformer>"
 
 # Full diffusers base
-python app.py --txt2img --prompt "..." --zimage-model "Tongyi-MAI/Z-Image-Turbo"
+python app.py --txt2img --prompt "..." --zimage-model "black-forest-labs/FLUX.2-klein-4B"
 ```
 
 ## LoRA (up to 3, combinable)  — `--lora NAME[:WEIGHT]`

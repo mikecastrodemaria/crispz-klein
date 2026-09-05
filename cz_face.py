@@ -1,4 +1,4 @@
-﻿"""crispz-studio - FaceSwap (InsightFace/inswapper) + restauration GFPGAN, caption
+﻿"""crispz-klein - FaceSwap (InsightFace/inswapper) + restauration GFPGAN, caption
 local BLIP (fallback Ollama) et detourage rembg.
 
 Extrait de app.py. Calcul "feuille" optionnel (features gated): ne depend que de
@@ -49,7 +49,7 @@ _CAPTIONER = None  # (kind, processor, model), charge paresseusement
 #   "caption_model": "blip-large" (defaut) | "blip-base"
 # - blip-large : meme API que blip-base, captions plus riches (~1.9 GB).
 # (Florence-2 a ete retire: son code distant est incompatible avec transformers >= ~4.5x
-#  exige par Z-Image -> chargeait mais plantait a la generation.)
+#  exige par le pipeline de diffusion -> chargeait mais plantait a la generation.)
 _CAPTION_REPOS = {
     "blip-base":  "Salesforce/blip-image-captioning-base",
     "blip-large": "Salesforce/blip-image-captioning-large",

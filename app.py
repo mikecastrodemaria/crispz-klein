@@ -1,9 +1,10 @@
-"""crispz-studio - Z-Image txt2img + upscaler/detailer (standalone, sans ComfyUI).
+"""crispz-klein - FLUX.2 Klein txt2img + edition multi-reference + upscaler/detailer
+(standalone, sans ComfyUI).
 
 Point d'entree mince. Tout le code a ete decoupe en modules cz_* :
   cz_core (config/paths/logging/device) · cz_imageio (I/O image) · cz_prompt (styles/
   wildcards) · cz_ollama (describe/improve/compose) · cz_esrgan (Real-ESRGAN) ·
-  cz_face (faceswap/restore/BLIP/rembg) · cz_pipeline (coeur Z-Image: generation,
+  cz_face (faceswap/restore/BLIP/rembg) · cz_pipeline (coeur FLUX.2 Klein: generation,
   pipelines, LoRA/checkpoints, offload, guidance) · cz_assetbrowser / cz_assets ·
   cz_ui (build_ui + handlers) · cz_cli (argparse + serveur).
 

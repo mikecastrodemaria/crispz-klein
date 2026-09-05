@@ -2539,7 +2539,7 @@ def txt2img_run(prompt, width, height, gen_steps, seed, negative_prompt="",
 def _gen_meta(mode, prompt, negative="", seed=None, steps=None, guidance=None,
               size=None, model=None, styles=None, extra=None):
     """Construit le dict de metadonnees de generation (pour sidecar/PNG)."""
-    m = {"app": "crispz-qwen-edit", "mode": mode, "prompt": prompt or "",
+    m = {"app": "crispz-klein", "mode": mode, "prompt": prompt or "",
          "negative": negative or "", "date": _now_stamp()}
     if seed is not None and int(seed) >= 0:
         m["seed"] = int(seed)

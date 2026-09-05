@@ -1,4 +1,4 @@
-"""crispz-qwen-edit - auto face detailer (facon ADetailer / Fooocus "Enhance").
+"""crispz-klein - auto face detailer (facon ADetailer / Fooocus "Enhance").
 
 Apres un rendu, detecte les visages (insightface buffalo_l, deja charge pour le Face
 Swap) et repasse CHAQUE visage en img2img a haute resolution :
