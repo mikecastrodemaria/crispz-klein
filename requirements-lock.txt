@@ -43,8 +43,16 @@ huggingface-hub==0.36.2
 peft==0.19.1
 sentencepiece==0.2.2
 spandrel==0.4.1
-# pas de 'gguf' ici: crispz-studio n'a pas de chemin de chargement GGUF
-# (contrairement aux forks krea / qwen-edit).
+# gguf: crispz-klein A un chemin de chargement GGUF (_load_transformer ->
+# from_single_file + GGUFQuantizationConfig). Le commentaire herite de
+# crispz-studio disait le contraire et le paquet manquait du lock: un install
+# ISOLE sortait donc un venv sans gguf, ou test_quant_formats echoue et un
+# .gguf est refuse a l'execution. Corrige le 2026-09-05.
+gguf==0.19.0
+# hf_xet: les repos HF recents sont sur Xet Storage; sans lui, huggingface_hub
+# retombe sur du HTTP classique (tres lent sur les gros fichiers) et avertit a
+# chaque telechargement. Manquait aussi du lock.
+hf_xet==1.6.0
 
 # UI / service
 gradio==5.50.0
