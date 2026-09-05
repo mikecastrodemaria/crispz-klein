@@ -1,7 +1,50 @@
 # Changelog
 
-All notable changes to crispz-studio. One versioned entry per feature.
+All notable changes to crispz-klein. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
+
+Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio and
+describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
+[FORK.md](FORK.md).
+
+## 1.18.0 — Engine: FLUX.2 Klein 4B, one model for the whole surface
+
+Fork of crispz-qwen-edit. `Flux2KleinPipeline` does txt2img **and**
+multi-reference editing (its `image` argument takes a list of PIL images), and
+`Flux2KleinInpaintPipeline` does inpaint **and** img2img. So the four kinds of
+`get_pipe` collapse onto **one loaded model**: 14.9 GB total on an RTX 5090
+against two 20B models upstream, 1024x1024 in 2.0 s at 4 steps, an edit with one
+reference in 3.0 s.
+
+`Flux2KleinPipeline` exposes no `strength` - its `image` is a reference
+conditioning, not a noised start. img2img therefore routes to the inpaint
+pipeline with a **full white mask**, injected inside `_qwen_call` so that
+`_refine_whole`, `_refine_tiled`, `process_one` and `txt2img_run(upscale=True)`
+are untouched. `get_pipe("img2img")` and `get_pipe("inpaint")` return the same
+object.
+
+**No CFG and no negative prompt, and the app says so.** klein-4B is step-wise
+distilled: renders at guidance 1.0 / 4.0 / 8.0 are bit-identical (MAE 0.0000,
+`tests/test_klein_guidance.py`), and diffusers warns about it itself. `_cfg()`
+returns `{}`, `_qwen_call` pins `guidance_scale=1.0` when the transformer reports
+`is_distilled` (which also silences that per-call warning), and the CLI protocol
+announces `supports.negative: false` plus a warning on any spec carrying a
+`negative` or a `guidance`. The UI slider survives for API compatibility and
+changes nothing.
+
+The 19 Qwen-Image-Edit task LoRAs added in 1.17.0 and the 2 Lightning speed
+presets are **removed from the catalogue**: they cannot load on FLUX.2, and
+`caps` was advertising them. The upstream catalogue is kept commented in
+`cz_edit_loras.py` as a merge reference; the lazy-download machinery is intact
+and wakes up as soon as a FLUX.2 edit LoRA is declared. klein is already
+distilled to 4 steps, so there is nothing left to accelerate: `edit_fast` is
+`["off"]`.
+
+The single-file / GGUF architecture guard looked for `img_in`, `txt_in`,
+`time_text_embed` - none of which exist in a FLUX.2 transformer. Markers
+re-derived from the real 169-tensor checkpoint: `single_transformer_blocks.`,
+`double_stream_modulation`, `x_embedder`, `context_embedder`. A 7.2 GB
+single-file `.safetensors` loads and renders.
 
 ## 1.17.0 — Edit LoRA presets: task LoRAs on the edit pipe, fetched on first use
 
