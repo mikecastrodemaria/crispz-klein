@@ -1,4 +1,4 @@
-"""crispz-studio - CLI (mode batch / scripting) + serveur HTTP persistant (FastAPI).
+"""crispz-klein - CLI (mode batch / scripting) + serveur HTTP persistant (FastAPI).
 
 Extrait de app.py (step 8). Importe l'UI et l'orchestration depuis cz_ui (qui branche
 tous les cz_*); ne redefinit rien du pipeline. app.py se contente d'appeler cli_main.
@@ -55,7 +55,7 @@ def _disable_brotli():
 # Palier 3 : serveur HTTP persistant (FastAPI), load paresseux + unload sur idle
 # ----------------------------------------------------------------------------
 def serve_main(host="127.0.0.1", port=7861, idle_timeout=300):
-    """Petit serveur HTTP. Le modele Z-Image se charge au premier /upscale et reste
+    """Petit serveur HTTP. Le modele FLUX.2 Klein se charge au premier /upscale et reste
     chaud (plus de rechargement entre appels -> temps stables). Apres idle_timeout
     secondes sans requete, la VRAM est rendue (utile pour cohabiter avec Fooocus).
     Endpoints: GET /health, GET /models, POST /upscale, POST /unload."""
@@ -303,7 +303,7 @@ def cli_main(argv=None):
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="crispz-studio CLI (txt2img + upscale). No args: launches the Gradio UI.",
+        description="crispz-klein CLI (txt2img + upscale). No args: launches the Gradio UI.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--cli", action="store_true", help="Force CLI mode (otherwise: launches the UI)")
@@ -326,9 +326,9 @@ def cli_main(argv=None):
     parser.add_argument("-m", "--model", default=DEFAULT_MODEL,
                         help="ESRGAN model (file in ESRGAN_DIR). Fallback: first found.")
     parser.add_argument("--factor", type=float, default=DEFAULT_FACTOR, help="Net upscale factor")
-    parser.add_argument("--denoise", type=float, default=DEFAULT_DENOISE, help="Z-Image strength (0 = ESRGAN only)")
+    parser.add_argument("--denoise", type=float, default=DEFAULT_DENOISE, help="refine strength (0 = ESRGAN only)")
     parser.add_argument("--no-refine", action="store_true",
-                        help="Skip the (slow) Z-Image img2img refine pass -> ESRGAN upscale only "
+                        help="Skip the (slow) img2img refine pass -> ESRGAN upscale only "
                              "(shortcut for --denoise 0).")
     parser.add_argument("--refine-first", action="store_true",
                         help="Refine at native resolution THEN ESRGAN upscale (~4-16x faster "
@@ -339,39 +339,39 @@ def cli_main(argv=None):
     parser.add_argument("--tile", type=int, default=DEFAULT_TILE, help="ESRGAN tile size (0 = disabled)")
     parser.add_argument("--overlap", type=int, default=DEFAULT_OVERLAP, help="ESRGAN tiling overlap")
     parser.add_argument("--refine-tile", type=int, default=DEFAULT_REFINE_TILE,
-                        help="Z-Image diffusion tile size (0 = whole image). >0 tiles the "
+                        help="diffusion tile size (0 = whole image). >0 tiles the "
                              "refine pass: caps VRAM and enables 4K+ without seams. Try 1024-1280.")
     parser.add_argument("--refine-overlap", type=int, default=DEFAULT_REFINE_OVERLAP,
-                        help="Overlap (feather) of the Z-Image diffusion tiles")
+                        help="Overlap (feather) of the diffusion tiles")
     parser.add_argument("--cpu-offload", choices=list(cz_pipeline.OFFLOAD_CHOICES),
                         default=cz_pipeline.OFFLOAD_MODE,   # config default_cpu_offload / env CZ_OFFLOAD
                         help="CPU offload of the diffusion pass (VRAM). none=all in VRAM | "
                              "model=offload per submodule (good tradeoff) | "
                              "sequential=more aggressive, slower. Requires accelerate.")
     parser.add_argument("--guidance", type=float, default=0.0,
-                        help="CFG guidance scale. 0 for Z-Image Turbo (default). "
-                             "Z-Image Base needs ~3.5-5 (and ~20+ steps).")
+                        help="CFG guidance scale. IGNORED on FLUX.2 Klein: the model is "
+                             "step-wise distilled, diffusers drops guidance_scale (see FORK.md).")
     parser.add_argument("--sampler", choices=list(SAMPLER_CHOICES), default=None,
                         help="Sampler: euler (native flow, default) or unipc (UniPC multistep). "
                              "Default from config default_sampler. (DPM++/DPM2a unavailable: "
-                             "Z-Image forces custom sigmas.)")
+                             "FLUX.2 Klein forces custom sigmas.)")
     parser.add_argument("--schedule", choices=list(SCHEDULE_INPUTS), default=None,
-                        help="Sigma schedule (ComfyUI-style): sgm_uniform (native Z-Image, "
+                        help="Sigma schedule (ComfyUI-style): sgm_uniform (native flow-matching, "
                              "default), beta, karras, exponential. 'simple' is accepted as an "
                              "alias of sgm_uniform (same curve, ComfyUI's name for it). "
                              "Default from default_schedule.")
     parser.add_argument("--no-esrgan", action="store_true",
-                        help="img2img only: skip the ESRGAN upscale, just run the Z-Image refine "
+                        help="img2img only: skip the ESRGAN upscale, just run the refine "
                              "on the input at native size (no enlargement).")
     parser.add_argument("--preset", choices=list(PRESETS), default="Custom",
                         help="Use-case preset (auto settings). Explicit flags override it.")
     # Text -> Image (txt2img)
     parser.add_argument("--txt2img", action="store_true",
-                        help="Generate an image from --prompt (Z-Image txt2img) instead of "
+                        help="Generate an image from --prompt (FLUX.2 Klein txt2img) instead of "
                              "reading -i. Add --upscale to also run ESRGAN + refine.")
     parser.add_argument("--gen-width", type=int, default=1024, help="txt2img width (mult. of 16)")
     parser.add_argument("--gen-height", type=int, default=1024, help="txt2img height (mult. of 16)")
-    parser.add_argument("--gen-steps", type=int, default=8, help="txt2img steps (Z-Image Turbo)")
+    parser.add_argument("--gen-steps", type=int, default=8, help="txt2img steps (klein: 4)")
     parser.add_argument("--negative", default="", help="Negative prompt (txt2img)")
     parser.add_argument("--upscale", action="store_true",
                         help="In --txt2img: run the ESRGAN + refine upscale on the generated image")

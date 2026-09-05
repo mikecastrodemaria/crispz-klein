@@ -1,6 +1,6 @@
 """crispz family - CLI protocol v1: JSON spec in, JSON out.
 
-Contract shared by the whole family (crispz-studio, crispz-qwen-edit,
+Contract shared by the whole family (crispz-studio, crispz-qwen-edit, crispz-klein,
 crispz-krea*, and comics2crispz which drives them):
 
     czp caps                       -> this tool's capabilities + running instance
@@ -278,7 +278,7 @@ def validate_spec(spec, op="gen"):
         raise SpecError("empty 'prompt'")
     if op == "edit":
         # edit = image + INSTRUCTION -> image, via le pipeline omni/edit de
-        # l'outil (Qwen-Image-Edit, Z-Image Omni). Sans ce modele: refus
+        # l'outil. Chez klein le pipeline de base edite lui-meme, donc pas de refus
         # net (code 3) - jamais une image NEUVE generee en douce a la place.
         if not out["prompt"]:
             raise SpecError("edit requires 'prompt' (the edit instruction)")

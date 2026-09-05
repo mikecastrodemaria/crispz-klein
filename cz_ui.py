@@ -1,4 +1,4 @@
-"""crispz-studio - interface Gradio (build_ui) + handlers UI + orchestration commune
+"""crispz-klein - interface Gradio (build_ui) + handlers UI + orchestration commune
 (run / _editor_* / presets / timing) extraite de app.py (step 8).
 
 Ce module branche tous les cz_* (core/pipeline/esrgan/face/prompt/ollama/imageio/
@@ -232,7 +232,7 @@ def _dl_path(pil, path):
 # Ordre de priorite pour ESRGAN_DIR et BASE_REPO:
 #   1) variable d'environnement (ESRGAN_DIR / ZIMAGE_MODEL)
 #   2) preferences.json
-#   3) defaut: ./upscale_models  et  Tongyi-MAI/Z-Image-Turbo
+#   3) defaut: ./upscale_models  et  black-forest-labs/FLUX.2-klein-4B
 # ----------------------------------------------------------------------------
 import json  # noqa: F811 (utilise par _load_styles ci-dessous)
 
@@ -260,7 +260,7 @@ if isinstance(CONFIG.get("performance_presets"), dict) and CONFIG["performance_p
 
 
 # _load_prefs_raw / _save_prefs_keys / _is_single_file / _prefs -> cz_core.py.
-# Coeur Z-Image -> cz_pipeline.py: modele courant (BASE_REPO/ZIMAGE_TRANSFORMER),
+# Coeur FLUX.2 Klein -> cz_pipeline.py: modele courant (BASE_REPO/ZIMAGE_TRANSFORMER),
 # dossiers checkpoints/loras, LoRA actives, Omni, caches pipe, offload, guidance,
 # stop/progress + generation/orchestration. app lit l'etat via cz_pipeline.NAME et
 # pose cz_pipeline._PROGRESS / cz_pipeline._STOP depuis les handlers UI.
@@ -312,7 +312,7 @@ def apply_preset_to_args(args, raw_argv):
 
 
 # ----------------------------------------------------------------------------
-# Z-Image (diffusers, BF16) -> cz_pipeline.py: _ensure_base / get_pipe / _load_omni /
+# FLUX.2 Klein (diffusers, BF16) -> cz_pipeline.py: _ensure_base / get_pipe /
 # generate / generate_omni / inpaint_run / outpaint / process_one / txt2img_run +
 # round_to_multiple / _reframe_canvas / _make_generator / _refine_* / _gen_meta.
 # (importes en tete). _editor_to_image_mask / _editor_img / _crop_input restent ici
@@ -427,8 +427,8 @@ def run(image, source_folder, esrgan_model, factor, denoise, steps, prompt, seed
     - Si source_folder est un dossier existant -> batch sur ses images.
     - Sinon, image est utilisee (PIL ou chemin str).
     - print_output: imprime le chemin absolu de chaque image sauvee sur stdout.
-    - refine_tile > 0: passe Z-Image en tuiles (4K+, plafonne le pic VRAM).
-    - do_esrgan=False: img2img pur (pas d'ESRGAN, juste le refine Z-Image).
+    - refine_tile > 0: passe de refine en tuiles (4K+, plafonne le pic VRAM).
+    - do_esrgan=False: img2img pur (pas d'ESRGAN, juste le refine diffusion).
     - refine_first=True: refine PUIS ESRGAN (diffusion a la resolution native = rapide).
     """
     global _LAST_RUN_DST
@@ -541,15 +541,16 @@ def _refresh_models(new_dir):
     return gr.update(choices=models, value=value), f"{len(models)} model(s) found in {cz_esrgan.ESRGAN_DIR}"
 
 
-# Repos de base officiels Qwen, proposes directement dans le dropdown
-# "Qwen checkpoint" (selectionner = swap complet du BASE_REPO).
-ZIMAGE_BASE_REPOS = ["Qwen/Qwen-Image"]
+# Repos de base officiels FLUX.2 Klein, proposes directement dans le dropdown
+# "Klein checkpoint" (selectionner = swap complet du BASE_REPO).
+# NB: le 9B est volontairement ABSENT -- licence non commerciale (cf. FORK.md).
+ZIMAGE_BASE_REPOS = ["black-forest-labs/FLUX.2-klein-4B"]
 # Preset Performance par defaut pour chaque repo de base officiel: Turbo (distille,
 # guidance 0) vs Base (a besoin d'une vraie CFG + plus de steps). Le nom du repo de base
-# ("...Z-Image") ne contient pas "base", donc on mappe explicitement plutot que par
+# ("...klein-4B") ne contient pas "base", donc on mappe explicitement plutot que par
 # substring. steps/guidance sont ensuite tires du preset lui-meme (source unique).
-# Aucun preset force pour le repo de base Qwen: on laisse profile_for_model() decider
-# (profil "qwen" = 30 steps / guidance 4.0). NB: ne PAS remettre ici un nom de preset
+# Aucun preset force pour le repo de base klein: on laisse profile_for_model() decider
+# (profil "klein" = 4 steps / guidance 1.0). NB: ne PAS remettre ici un nom de preset
 # inexistant dans performance_presets -- _apply_checkpoint l'ignorerait silencieusement.
 ZIMAGE_BASE_PERFORMANCE = {}
 
@@ -591,7 +592,7 @@ def _perf_update(steps, guidance):
 
 
 def _apply_checkpoint(name):
-    """Selectionne soit un repo de base officiel Z-Image (swap complet du BASE_REPO),
+    """Selectionne soit un repo de base officiel FLUX.2 Klein (swap complet du BASE_REPO),
     soit un checkpoint single-file local (transformer override, VAE/encoder du base repo).
     Ajuste aussi steps/guidance ET le preset Performance selon le profil du modele."""
     if not name:
@@ -622,7 +623,7 @@ def _ui_civitai_reco(name, progress=gr.Progress()):
     'meta' des images d'exemple: steps/CFG en mediane, sampler en majorite). Fetch le
     sidecar civitai.json s'il manque (avec progression: le hash d'un checkpoint de
     12 Go sans cache peut prendre plusieurs minutes sur un HDD). Les samplers sans
-    equivalent Z-Image (DPM++...) sont ignores: on garde le sampler courant et on
+    equivalent FLUX.2 (DPM++...) sont ignores: on garde le sampler courant et on
     n'applique que steps/CFG."""
     import cz_civitai
     _noop = (gr.update(), gr.update(), gr.update(), gr.update())
@@ -658,7 +659,7 @@ def _ui_civitai_reco(name, progress=gr.Progress()):
         parts.append(f"CFG={reco['guidance']}")
     if reco.get("sampler"):
         parts.append(f"sampler={reco['sampler']}"
-                     + ("" if samp else " → no Z-Image equivalent, kept current"))
+                     + ("" if samp else " → no FLUX.2 equivalent, kept current"))
     if reco.get("size"):
         parts.append(f"size={reco['size']} (info only)")
     msg = (f"📊 CivitAI consensus ({reco.get('n', '?')} community image(s)): "
@@ -985,7 +986,7 @@ def _save_civitai_key(token):
 def _save_paths_to_prefs(esrgan_dir, checkpoints_dir=None, checkpoints_extra_dir=None,
                          loras_dir=None, wildcards_dir=None):
     """Persiste les chemins dans preferences.json (local) -> charges au prochain boot.
-    Le base repo Z-Image courant (choisi via le dropdown) est persiste tel quel."""
+    Le base repo klein courant (choisi via le dropdown) est persiste tel quel."""
     set_esrgan_dir(esrgan_dir)
     if checkpoints_dir:
         set_checkpoints_dir(checkpoints_dir)
@@ -1200,7 +1201,7 @@ def _ui_edit(mode, editor_value, dirs, ratio, fit, auto_describe, harmonize, har
         except Exception as e:
             _log(f"{mode} error: {e}")
             return [], f"{mode} failed: {e}", history, history
-        # Harmonize: passe img2img legere (refine Z-Image, sans ESRGAN) sur TOUTE l'image
+        # Harmonize: passe img2img legere (refine diffusion, sans ESRGAN) sur TOUTE l'image
         # finale -> unifie grain/lumiere/raccord et efface l'effet "zone ajoutee". Low
         # denoise (~0.2) pour ne pas reinventer le sujet.
         if harmonize and float(harmonize_denoise) > 0.001:
@@ -1772,7 +1773,7 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                     if "CUDA" in str(e) or "out of memory" in str(e).lower():
                         msg += ("  \n**VRAM saturee** (autre app GPU comme ComfyUI encore chargee ? "
                                 "spill -> timeout Windows TDR). Ferme les autres apps GPU, **redemarre "
-                                "crispz-studio** (le contexte CUDA est mort), baisse refine_tile / factor.")
+                                "crispz-klein** (le contexte CUDA est mort), baisse refine_tile / factor.")
                     # Les images deja produites restent affichees/sauvees.
                     return _done(images, "  \n".join(reports + [msg]), img_paths)
                 images.append(last_result)
@@ -3074,7 +3075,7 @@ def build_ui():
     # Omni (multi-reference) propose seulement si un modele Omni/Edit est configure.
     omni_on = bool((cz_pipeline.OMNI_MODEL or "").strip())
 
-    with gr.Blocks(title=f"crispz-studio {APP_VERSION}", theme=gr.themes.Default(), css=FOOOCUS_CSS,
+    with gr.Blocks(title=f"crispz-klein {APP_VERSION}", theme=gr.themes.Default(), css=FOOOCUS_CSS,
                    js=js_full, head=_ui_head()) as demo:
         # La galerie du dossier de sortie s'ouvre dans un nouvel onglet (Asset Browser),
         # via le bouton sous l'apercu. Pas de panneau galerie inline.
@@ -3166,7 +3167,7 @@ def build_ui():
                 with gr.Row(equal_height=True):
                     negative = gr.Textbox(show_label=False, value=CONFIG.get("default_negative_prompt", ""),
                                           elem_id="cz_neg", lines=1, max_lines=6, container=False, scale=4,
-                                          placeholder="Negative prompt - what you do NOT want (needs guidance > 0)")
+                                          placeholder="Negative prompt - INERT on FLUX.2 Klein (distilled: no CFG, no negative_prompt)")
                     stop_btn = gr.Button("Stop", variant="stop", scale=1, min_width=150)
 
                 with gr.Row():
@@ -3309,7 +3310,7 @@ def build_ui():
                         with gr.Tab("Vision Mix"):
                             gr.Markdown("*Vision Mix: a vision model looks at your reference images "
                                         "and an LLM blends them into ONE text prompt (e.g. a person + "
-                                        "an outfit + a setting), then Qwen-Image generates from it. "
+                                        "an outfit + a setting), then FLUX.2 Klein generates from it. "
                                         "Needs Ollama with a vision model (Advanced > Prompt AI). "
                                         "It mixes ideas/style, not exact pixels.*")
                             with gr.Row():
@@ -3408,14 +3409,14 @@ def build_ui():
                                     ref3 = _crop_input("Ref 3", 220)
                                 with gr.Column(min_width=300):
                                     ref4 = _crop_input("Ref 4", 220)
-                            # Presets d'edition (LoRA HF "Qwen-Image-Edit-2511 fast lazy
+                            # Presets d'edition: catalogue VIDE chez klein (les LoRA "Qwen-Image-Edit fast lazy
                             # load"): poses sur le pipe d'EDITION seulement, telecharges a
                             # la premiere selection. Case ON/OFF dans Models > LoRA.
                             with gr.Row(elem_classes="cz-omni-controls", equal_height=False):
                                 with gr.Column(scale=2, min_width=360):
                                     edit_lora_dd = gr.Dropdown(
                                         choices=_edit_lora_choices(), value="None",
-                                        label="Edit LoRA (Qwen-Image-Edit-2511 fast presets)",
+                                        label="Edit LoRA presets (none published for FLUX.2 yet)",
                                         info="✓ = on disk, ⬇ = fetched from Hugging Face on first "
                                              "use. Photo-to-Anime, Any-Light, Upscaler, "
                                              "Multiple-Angles... No trigger word: describe the edit.")
@@ -3517,8 +3518,8 @@ def build_ui():
                         performance = gr.Radio(list(PERFORMANCE),
                                                value=CONFIG.get("default_performance", "Turbo (8 steps)"),
                                                label="Performance",
-                                               info="Sets steps + guidance (Lightning also applies its LoRA). "
-                                                    "CFG presets = for the standard Qwen-Image base.")
+                                               info="Sets the step count. NB: the guidance value is inert - "
+                                                    "klein is distilled and ignores CFG.")
                         aspect = gr.Dropdown(list(ASPECT_RATIOS),
                                              value=CONFIG.get("default_aspect_ratio", "1024 x 1024  (1:1)"),
                                              label="Aspect ratio")
@@ -3543,7 +3544,8 @@ def build_ui():
                         with gr.Row():
                             guidance = gr.Slider(0.0, 8.0, value=float(CONFIG.get("default_guidance", 0.0)),
                                                  step=0.5, label="CFG guidance", scale=2,
-                                                 info="1 = Lightning/Rapid merges (CFG off). Qwen-Image base: ~4.")
+                                                 info="NO EFFECT on klein: the model is step-wise distilled, so "
+                                                      "diffusers ignores guidance_scale. Kept for API compat.")
                             sampler_dd = gr.Dropdown(
                                 list(SAMPLER_CHOICES),
                                 value=(CONFIG.get("default_sampler") or "euler").strip().lower()
@@ -3551,12 +3553,12 @@ def build_ui():
                                 else "euler",
                                 label="Sampler", scale=1,
                                 info="euler = native flow. unipc = UniPC. (DPM++/DPM2a impossible: "
-                                     "Qwen-Image forces custom sigmas.)")
+                                     "FLUX.2 Klein forces custom sigmas.)")
                             schedule_dd = gr.Dropdown(
                                 list(SCHEDULE_CHOICES),
                                 value=_norm_schedule(CONFIG.get("default_schedule")),
                                 label="Schedule", scale=1,
-                                info="sigma schedule (ComfyUI-style). sgm_uniform = native Qwen-Image "
+                                info="sigma schedule (ComfyUI-style). sgm_uniform = native flow-matching "
                                      "(what ComfyUI calls 'simple'). beta/karras/exponential remap "
                                      "the sigmas.")
                         # set_sampler/set_schedule renvoient un statut: on l'AFFICHE au lieu
@@ -3656,7 +3658,7 @@ def build_ui():
                                 transformer_tb = gr.Textbox(
                                     value="", scale=3,
                                     label="Transformer override (HF repo / diffusers folder)",
-                                    placeholder="HF repo with a Qwen-Image transformer",
+                                    placeholder="HF repo with a FLUX.2 transformer",
                                     info="For community models with an incomplete tokenizer: "
                                          "loads only the transformer, keeps base VAE/encoder.")
                                 with gr.Row():
@@ -3714,7 +3716,7 @@ def build_ui():
                             lora_status = gr.Markdown("")
                             edit_loras_cb = gr.Checkbox(
                                 value=cz_pipeline.EDIT_LORAS_ENABLED,
-                                label="Edit LoRAs (Qwen-Image-Edit presets)",
+                                label="Edit LoRAs (no FLUX.2 preset published yet)",
                                 info="Applies the edit LoRA chosen under the reference images "
                                      "(Reference (Omni) tab) on the EDIT pipe. Off = the preset "
                                      "is kept but not applied (with/without comparison).")
@@ -3741,16 +3743,18 @@ def build_ui():
                             wild_status = gr.Markdown("")
 
                         with gr.Accordion("\U0001F5BC️ Omni / Edit (multi-reference)", open=False):
-                            gr.Markdown("*The Reference (Omni) tab uses Qwen-Image-Edit "
-                                        "(default: Qwen/Qwen-Image-Edit-2509, multi-image instruction "
-                                        "editing). Set another repo here, then restart.*")
+                            gr.Markdown("*The Reference (Omni) tab is served by the BASE model itself: "
+                                        "`Flux2KleinPipeline` takes a list of images, so multi-reference "
+                                        "editing needs no second model and no extra VRAM. Changing the "
+                                        "checkpoint changes the editor too - the field below is kept for "
+                                        "API compatibility and is a no-op.*")
                             # Liste = repos HF d'edition + fichiers d'edition locaux (checkpoints
                             # dir + extra: *edit*, *aio*, *rapid* en .gguf/.safetensors). Texte
                             # libre accepte (autre repo / chemin). Applique a chaud (pipe omni
                             # rechargee au prochain edit); le restart ne sert qu'a faire
                             # apparaitre l'onglet quand aucun modele n'etait configure.
                             _omni_cur = (cz_pipeline.OMNI_MODEL or CONFIG.get("zimage_omni_model") or "")
-                            _omni_choices = ["Qwen/Qwen-Image-Edit-2511", "Qwen/Qwen-Image-Edit-2509"] \
+                            _omni_choices = list(ZIMAGE_BASE_REPOS) \
                                 + cz_pipeline.list_edit_models()
                             if _omni_cur and _omni_cur not in _omni_choices:
                                 _omni_choices.insert(0, _omni_cur)
@@ -3971,7 +3975,7 @@ def build_ui():
         omni_check_btn.click(_ui_check_omni, None, [omni_status])
         omni_refresh_btn.click(
             lambda cur: gr.update(choices=(([cur] if cur else [])
-                                           + ["Qwen/Qwen-Image-Edit-2511", "Qwen/Qwen-Image-Edit-2509"]
+                                           + list(ZIMAGE_BASE_REPOS)
                                            + [m for m in cz_pipeline.list_edit_models() if m != cur])),
             [omni_model_tb], [omni_model_tb])
         omni_check_btn2.click(_ui_check_omni, None, [omni_status2])
