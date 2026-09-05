@@ -60,6 +60,12 @@ def _api_get(endpoint, params=None, api_key=None, timeout=20):
             body = e.read().decode("utf-8", errors="ignore")[:160]
         except Exception:
             pass
+        if e.code == 404 and endpoint.startswith("/model-versions/by-hash/"):
+            # Fichier inconnu de Civitai (modele Hugging Face, merge perso): normal,
+            # rien a corriger -> une ligne courte, sans le JSON d'erreur.
+            _log(f"civitai: {endpoint.rsplit('/', 1)[-1][:12]}... not on Civitai "
+                 f"(HF / local model), no metadata")
+            return None
         _log(f"civitai GET {endpoint} -> HTTP {e.code} {e.reason}"
              + (f" | {body}" if body else "")
              + ("  (no API key set: gated/NSFW content is hidden)" if not key and e.code in (401, 403) else ""))

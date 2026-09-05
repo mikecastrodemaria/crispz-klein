@@ -3853,8 +3853,8 @@ def build_ui():
         meta_apply_all_btn.click(_ui_meta_apply_all, [meta_state],
                                  [input_meta_md, prompt, negative, seed, gen_steps, guidance,
                                   width, height, sampler_dd, schedule_dd]) \
-            .then(set_sampler, [sampler_dd], None) \
-            .then(set_schedule, [schedule_dd], None)
+            .then(set_sampler, [sampler_dd], [sampler_status]) \
+            .then(set_schedule, [schedule_dd], [sampler_status])
 
         # Vary (facon Fooocus): 1 clic arme un img2img pur (ESRGAN off) a denoise fixe,
         # ouvre le panneau Input Image, et laisse l'utilisateur presser Generate.
@@ -3912,8 +3912,8 @@ def build_ui():
         # programmatiques ne declenchent pas .change, d'ou les .then explicites).
         civitai_reco_btn.click(_ui_civitai_reco, [ckpt_dd],
                                [ckpt_status, gen_steps, guidance, sampler_dd, schedule_dd]) \
-            .then(set_sampler, [sampler_dd], None) \
-            .then(set_schedule, [schedule_dd], None)
+            .then(set_sampler, [sampler_dd], [sampler_status]) \
+            .then(set_schedule, [schedule_dd], [sampler_status])
         transformer_apply_btn.click(_apply_transformer_repo, [transformer_tb],
                                     [ckpt_status, gen_steps, guidance, performance])
         lora_refresh_btn.click(_refresh_loras, [lora_dir_tb, lora_extra_dirs_tb],
