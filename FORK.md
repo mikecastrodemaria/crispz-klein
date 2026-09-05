@@ -2,7 +2,7 @@
 
 Fork **texte → image + édition multi-référence** basé sur
 [`black-forest-labs/FLUX.2-klein-4B`](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B)
-(4B, Apache 2.0, distillé ~4 steps). Parti de **crispz-qwen-edit** plutôt que de
+(4B, Apache 2.0, distillé 4 steps). Parti de **crispz-qwen-edit** plutôt que de
 crispz-studio ou crispz-krea2, parce que klein-4B a le même profil fonctionnel que
 Qwen-Image-Edit — txt2img, img2img, inpaint et édition multi-référence dans un seul
 fork — là où krea2 est le fork amputé (`img2img: False`, `inpaint: False`, pas
@@ -12,48 +12,41 @@ d'omni, pas de single-file).
 - Remotes : `origin` = crispz-klein, `upstream` = crispz-studio, `qwen` = crispz-qwen-edit.
 - Base du fork : `3c128c8` (crispz-qwen-edit/main).
 
-> **État : portage non commencé.** Ce fichier est le plan de portage, pas la
-> description d'un fork terminé. L'arbre est encore intégralement Qwen-Image.
-> Les numéros de ligne renvoient à `cz_pipeline.py` tel qu'hérité de `3c128c8`.
+> **État : portage fait et validé sur GPU** (RTX 5090, diffusers 0.39.0.dev0,
+> 2026-09-05). Les 4 ops du protocole v1 tournent, la suite de tests héritée passe
+> en entier. Restent : README/identité et le launcher Pinokio (cf. § État).
+
+## Mesures (RTX 5090, 1024×1024, 4 steps, bf16, offload none)
+
+| Étape | Temps | VRAM |
+|---|---|---|
+| chargement du modèle | 8,9 s | 14,94 Go |
+| `gen` (txt2img) | 2,0 s | — |
+| `edit` 1 référence | 3,0 s | — |
+| `edit` 2 références | 5,2 s | — |
+| `inpaint` | 3,0 s | — |
+| `upscale` factor 1 (img2img) | 1,7 s | — |
+
+**14,94 Go au total, quel que soit le nombre de pipelines dérivés** : un seul modèle
+sert txt2img, edit, inpaint et img2img (vérifié par `test_klein_e2e.py` étape 6).
+Pour mémoire, crispz-qwen-edit charge deux modèles de 20B pour la même surface.
 
 ## Pourquoi klein-4B plutôt que Krea 2 ou Anima
 
 | | Qwen-Image-Edit-2511 | **klein-4B** | Krea 2 | Anima turbo |
 |---|---|---|---|---|
 | Params | 20B | **4B** | 12,9B | 2B |
-| VRAM bf16 | ~40 Go | **~13 Go** | ~26 Go | ~5 Go |
+| VRAM mesurée | ~40 Go (2 modèles) | **14,9 Go** | ~26 Go | ~5 Go |
 | Steps | ~8 (Lightning) | **4** | 8 | 8–12 |
-| `from_single_file` | oui | **oui** | non | n/a (ComfyUI) |
-| img2img / inpaint | oui | oui (via inpaint) | **non** | non |
+| `from_single_file` | oui | **oui, testé** | non | n/a (ComfyUI) |
+| img2img / inpaint | oui | oui | **non** | non |
 | multi-référence | modèle séparé | **natif, même pipeline** | non | LoRA expérimental |
 | Licence | Apache 2.0 | **Apache 2.0** | Community (plafond 1 M$) | — |
 
-## Ce que diffusers expose
-
-```
-diffusers/pipelines/flux2/
-  Flux2Pipeline              (FLUX.2-dev, hors scope)
-  Flux2KleinPipeline         base : txt2img ET édition multi-réf, unifié
-  Flux2KleinInpaintPipeline  inpaint, et le SEUL à exposer `strength`
-  Flux2KleinKVPipeline       variante KV-cache (repo -9b-kv, hors scope)
-```
-
-Signatures vérifiées sur `diffusers/main` :
-
-| kwarg | `Flux2KleinPipeline` | `Flux2KleinInpaintPipeline` |
-|---|---|---|
-| `image` | **`list[PIL] \| PIL`** | oui |
-| `image_reference` | — | oui |
-| `mask_image` | — | oui |
-| `strength` | **absent** | oui (défaut 0.8) |
-| `padding_mask_crop` | — | oui |
-| `guidance_scale` | 4.0 | 8.0 |
-| `negative_prompt` | **absent** | **absent** |
-| `negative_prompt_embeds` | oui | oui |
-| `sigmas` | oui | oui |
-
-`Flux2KleinPipeline(DiffusionPipeline, Flux2LoraLoaderMixin)`,
-`model_cpu_offload_seq = "text_encoder->transformer->vae"`.
+Rendu BD : klein sort des cases encrées à plat, avec cadre, sans LoRA de style
+(cf. `tests/e2e_1_gen.png`). L'édition préserve le personnage au pixel près tout en
+changeant la scène (`tests/e2e_2_edit1.png`, nuit → jour) — c'est précisément ce dont
+le casting `@Nom` de comics2crispz a besoin.
 
 ## Le mapping
 
@@ -65,81 +58,108 @@ QwenImageImg2ImgPipeline    -> Flux2KleinInpaintPipeline    <- masque blanc plei
 QwenImageTransformer2DModel -> Flux2Transformer2DModel
 ```
 
-## Ce que ce fork gagne sur l'amont
+Signatures relevées sur `diffusers/main` :
 
-**1. Un seul modèle au lieu de deux.** `image` du pipeline base accepte déjà une
-**liste** de PIL : `generate_omni` (l. 1977) tape `_ensure_base()` au lieu de charger
-un second modèle. Tombent avec :
-
-| Élément | Ligne |
-|---|---|
-| `_load_omni` | 1896-1975 |
-| `DEFAULT_OMNI_REPO` | 34 |
-| `set_omni_model` | 1267 |
-| `list_edit_models` | 1278 |
-| `check_omni_available` | 1305 |
-| branche `kind == "omni"` de `get_pipe` | 1845-1851 |
-| `set_edit_loras` / `edit_speed_choices` / `set_edit_loras_enabled` | 1201, 1224, 1257 |
-| `cz_edit_loras.py` (431 l.) | tout le fichier |
-
-~350 lignes en moins dans `cz_pipeline.py`, et le lazy load n'a plus qu'un modèle à
-jongler. Les LoRA d'édition deviennent des LoRA ordinaires (`set_loras`, l. 1184).
-
-**2. `image_reference` sur l'inpaint.** Inédit dans la lignée : on inpaint une zone
-**en passant une référence personnage**. Directement exploitable par comics2crispz —
-redessiner une case en gardant le casting cohérent.
-
-**3. Le single-file remarche.** Repo tagué `diffusion-single-file`, avec
-`flux-2-klein-4b.safetensors` à la racine **et** un layout diffusers complet.
-Contrairement à krea2, `list_checkpoints()` (l. 1034), `resolve_checkpoint` (1081) et
-l'indexation Civitai gardent tout leur sens. `_load_transformer` (1479-1583) se
-transpose tel quel.
+| kwarg | `Flux2KleinPipeline` | `Flux2KleinInpaintPipeline` |
+|---|---|---|
+| `image` | **`list[PIL] \| PIL`** | oui |
+| `image_reference` | — | oui |
+| `mask_image` | — | oui |
+| `strength` | **absent** | oui (défaut 0.8) |
+| `padding_mask_crop` | — | oui |
+| `guidance_scale` | 4.0 | 8.0 |
+| `negative_prompt` | **absent** | **absent** |
 
 ## Ce qui diverge de l'amont — à ne PAS écraser lors d'un merge
 
-**A. `negative_prompt` n'existe nulle part.** C'est le coût principal du portage.
-Tout `_cfg` (l. 313-324) est bâti sur `true_cfg_scale` + `negative_prompt` ; ni l'un
-ni l'autre n'existe côté FLUX.2. Seul `negative_prompt_embeds` est exposé.
+### A. Aucun negative prompt, aucun CFG — **tranché par la mesure**
 
-| Option | Coût | `supports.negative` |
-|---|---|---|
-| honnête | 0 | `false` + warning quand un spec porte un `negative` |
-| propre | ~30 l. dans `_cfg` via `pipe.encode_prompt()` | `true` |
+`tests/test_klein_guidance.py` rend la même seed à `guidance_scale` 1.0 / 4.0 / 8.0 :
+**images bit-à-bit identiques** (MAE 0,0000, écart max 0). diffusers l'annonce
+lui-même — `pipeline_flux2_klein.py:585` : `if guidance_scale > 1.0 and
+self.config.is_distilled: logger.warning("Guidance scale ... is ignored")`. Le
+`model_index.json` du repo porte `"is_distilled": true`.
 
-`_qwen_call` (l. 327) dégrade **déjà** gracieusement sur `TypeError` pour exactement
-ces deux kwargs : le filet est en place, quelle que soit l'option retenue.
+Donc **option honnête** retenue (pas de `negative_prompt_embeds` à coder) :
 
-**B. Pas de `strength` sur le pipeline base → pas d'img2img direct.** `image=` y est
-un conditionnement *référence/édition* (façon Kontext), pas un départ bruité. Sans
-parade, `_refine_whole` (2383), `_refine_tiled` (2422), `process_one` (2482) et
-`txt2img_run(upscale=True)` (2578) n'ont pas de cible.
+- `_cfg()` renvoie `{}` — la signature est conservée, tous les callsites
+  `**_cfg(negative)` de l'amont restent valides ;
+- `_qwen_call()` injecte `guidance_scale = 1.0` quand `pipe.config.is_distilled`,
+  ce qui **tait le warning diffusers à chaque appel**. Si un checkpoint FLUX.2 NON
+  distillé est chargé un jour, `is_distilled` est faux et le curseur de l'UI
+  redevient un vrai CFG — le code gère déjà les deux ;
+- `cz_protocol` annonce `supports.negative: false` et **émet un warning** quand un
+  spec porte un `negative` ou un `guidance` (règle maison : dégradation annoncée).
 
-**Parade — c'est ce qui évite de retomber dans le trou de krea2 :**
-`Flux2KleinInpaintPipeline` expose `strength`. Un **masque entièrement blanc** = un
-img2img exact. Donc `get_pipe("img2img")` (l. 1839) renvoie le pipe *inpaint*, et
-`_refine_*` passe `mask_image=<blanc>, strength=denoise`. `padding_mask_crop` en
-prime pour le tuilage.
+`GUIDANCE` et le curseur de l'UI survivent (contrat `cz_ui` / `cz_cli`) mais
+n'ont aucun effet. `default_guidance` est passé à 1.0 partout pour que l'UI
+n'affiche pas une valeur suggérant un CFG actif.
 
-**C. Guidance.** La doc diffusers précise : *« For step-wise distilled models,
-`guidance_scale` is ignored. »* klein-4B est distillé à 4 steps → le curseur
-« guidance » de l'UI est peut-être **inopérant**. À mesurer AVANT de coder l'option
-A « propre » : deux rendus, `guidance_scale=1.0` vs `8.0`, même seed. Si l'image ne
-bouge pas, le débat A est tranché d'office (option honnête).
+### B. Pas de `strength` sur le pipeline base → img2img via l'inpaint
 
-## `cz_protocol.py` — le caps (l. 184-188)
+`image=` du pipeline base est un conditionnement *référence/édition* (façon Kontext),
+pas un départ bruité. `Flux2KleinInpaintPipeline` expose `strength` : l'img2img passe
+donc par lui avec un **masque entièrement blanc**.
 
-```python
-"supports": {"loras": True,
-             "refs": True,          # plus de _omni_configured() : natif au pipeline
-             "max_refs": MAX_REFS,
-             "seed": True,
-             "negative": <selon A>,
-             "arbitrary_size": True,
-             "edit": True, "inpaint": True, "img2img": True}
+L'injection est faite **dans `_qwen_call`**, pas aux quatre callsites : un appel qui
+porte `image` + `strength` sans `mask_image` reçoit un masque blanc à la taille de
+l'image. `_refine_whole`, `_refine_tiled`, `process_one` et `txt2img_run(upscale=True)`
+sont donc **inchangés** — surface de conflit minimale au merge.
+
+`get_pipe("img2img")` et `get_pipe("inpaint")` renvoient **le même objet** (partagé
+sous les deux clefs de `_DERIVED`).
+
+### C. Le catalogue de LoRA d'édition est VIDE — *imprévu, trouvé au test*
+
+`cz_edit_loras.py` héritait de 19 presets Qwen-Image-Edit 2509/2511 et de 2 presets
+Lightning. Tous **incompatibles FLUX.2** (architecture et clés différentes). Le `caps`
+les annonçait : un appelant demandant `Manga-Tone` aurait planté. `EDIT_LORA_SPECS`
+et `SPEED_SPECS` sont donc vidés — **le catalogue amont est conservé juste en dessous,
+commenté, comme référence de merge**. Toute la mécanique (téléchargement paresseux,
+index local, overrides config) est intacte : une entrée FLUX.2 suffit à la réveiller.
+
+Conséquences dans le `caps` : `edit_loras: []`, `edit_presets: false`,
+`edit_fast: ["off"]`. `speed_names()` renvoie `[]` — klein est déjà distillé à
+4 steps, il n'y a rien à accélérer.
+
+### D. `_QWEN_KEY_MARKERS` re-dérivé — *imprévu*
+
+La garde d'architecture du chemin single-file/GGUF cherchait `img_in`, `txt_in`,
+`time_text_embed` : **aucun n'existe** dans le transformer FLUX.2 (169 tenseurs
+relevés). Nouveaux marqueurs : `single_transformer_blocks.`,
+`double_stream_modulation`, `x_embedder`, `context_embedder`. Le nom de la constante
+est gardé pour limiter la surface de conflit ; seul le contenu change.
+
+### E. L'API omni survit, elle ne disparaît PAS
+
+**Correction du plan initial** : `cz_ui.py` et `cz_protocol.py` référencent ces
+symboles 20+ fois. Les supprimer casserait les deux. Ils sont donc **repointés**,
+pas retirés :
+
+| Symbole | Nouveau comportement |
+|---|---|
+| `OMNI_MODEL` | suit `BASE_REPO` (toujours non vide → edit dispo) |
+| `set_omni_model()` | no-op journalisé (changer le checkpoint change l'éditeur) |
+| `list_edit_models()` | renvoie `list_checkpoints()` |
+| `check_omni_available()` | message « native », sans appel réseau |
+| `get_pipe("omni")` | renvoie `_ensure_base()` |
+| `generate_omni()` | tape le pipeline de base, `image=` liste de PIL |
+| `_load_omni()` | **seule suppression réelle** (81 lignes) |
+
+## `cz_protocol.py` — le caps effectif
+
+```json
+"tool": "crispz-klein",
+"ops": ["caps", "gen", "upscale", "edit", "inpaint"],
+"supports": {"loras": true, "refs": true, "max_refs": 4, "seed": true,
+             "negative": false, "arbitrary_size": true, "faces": true,
+             "detail_faces": true, "detail_hands": true,
+             "edit": true, "edit_presets": false,
+             "inpaint": true, "img2img": true}
 ```
 
-Toutes les ops du protocole v1 (`caps` / `gen` / `edit` / `inpaint` / `upscale`)
-restent servies. **Aucun `exit 3`**, contrairement à crispz-krea2.
+**Aucun `exit 3`** : les 4 ops sont servies, y compris `upscale` factor 1
+(variation img2img) que crispz-krea2 refuse.
 
 Côté comics2crispz, ajouter dans `config.json` :
 
@@ -147,19 +167,6 @@ Côté comics2crispz, ajouter dans `config.json` :
 "klein": { "url": "http://127.0.0.1:7860",
            "czp": "D:/Github/crispz-klein/czp.bat" }
 ```
-
-## Ordre de portage
-
-1. Test guidance (point C) — décide le point A.
-2. `_ensure_base` (1753-1800) + `_load_transformer` (1479-1583) → Flux2.
-3. Supprimer la branche omni, recâbler `generate_omni` (1977) sur le base.
-4. `get_pipe` (1839) : `img2img` **et** `inpaint` → `Flux2KleinInpaintPipeline`,
-   masque blanc plein pour l'img2img.
-5. `_cfg` / `_qwen_call` (313-340) selon A.
-6. `cz_protocol.py` caps (184-188).
-7. `cz_ui.py` : **rien à masquer**, toutes les capacités sont supportées — c'est le
-   seul fork de la lignée où `HAS_IMG2IMG` / `HAS_INPAINT` / `HAS_OMNI` sont tous
-   vrais.
 
 ## Workflow de merge
 
@@ -171,6 +178,7 @@ git fetch upstream && git merge upstream/main      # améliorations génériques
 | Fichier | Stratégie |
 |---|---|
 | `cz_pipeline.py` | **ours** + porter à la main les améliorations génériques |
+| `cz_edit_loras.py` | **ours** (le catalogue amont doit rester commenté) |
 | `cz_ui.py`, `cz_core.py`, `config-sample.txt` | **theirs** + réappliquer le delta du fork |
 
 À porter depuis l'amont : `_load_monitor` / `_fmt_load` / `_load_pct`, `_apply_loras`
@@ -178,8 +186,8 @@ git fetch upstream && git merge upstream/main      # améliorations génériques
 `_SAVE_PRE_UPSCALE`, job queue, XYZ grid, asset browser.
 
 À **ne pas** porter : tout `QwenImage*` / `ZImage*` / `Krea2*`, `true_cfg_scale`,
-le second modèle d'édition (`zimage_omni_model`, `zimage_omni_base`) et
-`cz_edit_loras.py`.
+les clés `zimage_omni_model` / `zimage_omni_base`, le catalogue de LoRA d'édition
+Qwen, les presets Lightning, les marqueurs de clés Qwen.
 
 ## Piège du clonage entre forks
 
@@ -187,25 +195,31 @@ Ce fork a été créé par `git clone` (et non par copie de dossier) : `config.t
 `preferences.json`, gitignorés, **ne sont pas venus**. C'est délibéré — c'est ce qui
 avait coûté quatre échecs de validation à crispz-krea2.
 
-Au premier `cp config-sample.txt config.txt`, vérifier :
-`zimage_model` (→ `black-forest-labs/FLUX.2-klein-4B`), `zimage_transformer` (doit
-rester absent), `zimage_omni_model` / `zimage_omni_base` (à **supprimer**),
-`model_profiles` (les clés `rapid` / `lightning` / `qwen` ne matchent plus rien —
-prévoir une clé `klein` à 4 steps), `default_gen_steps` (24 → 4),
-`default_guidance` (4.0 → selon le point C), `default_performance`.
+Au premier `cp config-sample.txt config.txt`, vérifier : `zimage_model`
+(→ `black-forest-labs/FLUX.2-klein-4B`), `zimage_transformer` (doit rester absent),
+`zimage_omni_model` / `zimage_omni_base` (**supprimées du sample, ne pas les
+réintroduire**), `model_profiles` (clés `klein` / `flux-2` / `flux2` à 4 steps),
+`default_gen_steps` (4), `default_guidance` (1.0), `default_performance`
+(`Turbo (4 steps)`), `default_cpu_offload` (`none` : klein tient en 15 Go, contre
+`model` pour les 20B de Qwen).
 
-## Checklist post-merge
+## Tests
 
 ```bash
-.venv\Scripts\python -m py_compile app.py cz_pipeline.py cz_ui.py cz_core.py
-.venv\Scripts\python -c "import cz_ui; cz_ui.build_ui()"
-.venv\Scripts\python -c "import cz_pipeline as p; assert p.round_to_multiple(100)==96"
-.venv\Scripts\python -c "import diffusers; diffusers.Flux2KleinPipeline, diffusers.Flux2KleinInpaintPipeline"
+.venv\Scripts\python tests\test_klein_guidance.py   # point A/C : guidance ignoré
+.venv\Scripts\python tests\test_klein_e2e.py        # les 4 ops + partage des pipes
 ```
 
-Puis une génération réelle : `cz_pipeline.generate(prompt=..., width=1024,
-height=1024, steps=4, seed=7)`. Baseline à établir au premier run — aucune mesure
-n'existe encore pour ce fork.
+Suite héritée : **13/13 au vert**. Deux fixtures ont dû être portées dans
+`test_quant_formats.py` — les clés synthétiques (marqueurs Qwen) et la classe
+monkeypatchée (`QwenImageTransformer2DModel` → `Flux2Transformer2DModel`).
+
+Smoke test du protocole :
+
+```bash
+.venv\Scripts\python cz_protocol.py caps
+.venv\Scripts\python cz_protocol.py gen --spec spec.json --local
+```
 
 ## Licence
 
@@ -219,20 +233,23 @@ imposant des filtres de contenu. Ce fork cible le **4B** ; ne pas basculer
 
 ## État
 
-- [ ] Test guidance (point C) → tranche le point A.
-- [ ] `cz_pipeline.py` : `_ensure_base` + `_load_transformer` → `Flux2KleinPipeline` /
+- [x] Test guidance (point C) → guidance ignoré, images bit-à-bit identiques.
+- [x] `cz_pipeline.py` : `_ensure_base` + `_load_transformer` → `Flux2KleinPipeline` /
       `Flux2Transformer2DModel`.
-- [ ] Suppression de la branche omni (`_load_omni`, `set_omni_model`,
-      `list_edit_models`, `check_omni_available`, `cz_edit_loras.py`) ;
-      `generate_omni` rebranché sur le pipeline base.
-- [ ] `get_pipe` : `img2img` + `inpaint` → `Flux2KleinInpaintPipeline` (masque blanc
-      plein pour l'img2img).
-- [ ] `_cfg` / `_qwen_call` : sortie de `true_cfg_scale`, décision negative (A).
-- [ ] `cz_protocol.py` : caps (`refs: True` natif, `negative` selon A).
-- [ ] `config-sample.txt` + `cz_core.py` : défauts klein (4 steps, profil `klein`,
-      suppression des clés omni).
-- [ ] `requirements.txt` : version diffusers minimale exposant `flux2`. À confirmer.
-- [ ] Test génération + édition multi-réf réels sur GPU.
+- [x] `_load_omni` supprimé ; `generate_omni` et `get_pipe("omni")` sur le base ;
+      API omni repointée (cf. § E).
+- [x] `get_pipe` : `img2img` + `inpaint` → `Flux2KleinInpaintPipeline`, objet partagé,
+      masque blanc injecté dans `_qwen_call`.
+- [x] `_cfg` / `_qwen_call` : sortie de `true_cfg_scale`, `guidance_scale=1.0` si distillé.
+- [x] `cz_protocol.py` : caps + warnings `negative` / `guidance`.
+- [x] `cz_edit_loras.py` : catalogue Qwen et presets Lightning vidés (§ C).
+- [x] `_QWEN_KEY_MARKERS` re-dérivé sur le vrai transformer FLUX.2 (§ D).
+- [x] `config-sample.txt` + `cz_core.py` : défauts klein.
+- [x] Chemin single-file testé (checkpoint `.safetensors` de 7,2 Go chargé et rendu).
+- [x] Les 4 ops du protocole testées en `--local`.
+- [x] Suite héritée 13/13, `build_ui()` headless OK.
+- [ ] `requirements.txt` : figer une version diffusers minimale exposant `flux2`
+      (validé sur 0.39.0.dev0 ; le pin n'est pas encore posé).
 - [ ] Entrée `klein` dans `comics2crispz/config.json`.
 - [ ] README + identité (titres, captures).
 - [ ] Launcher Pinokio `crispz-klein.pinokio.git`.

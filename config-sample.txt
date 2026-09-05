@@ -1,7 +1,6 @@
 {
     "_hf_token_help": "Hugging Face token for GATED models (e.g. FLUX.1-Krea-dev). Create a READ token at https://huggingface.co/settings/tokens and accept the model license first. Leave empty if you ran 'huggingface-cli login'. config.txt is gitignored -> never commit your token.",
     "hf_token": "",
-
     "ollama_url": "http://localhost:11434",
     "ollama_describe_prompt": "You are an expert text-to-image prompt writer. Look at the image and output ONE detailed prompt as comma-separated visual tags (subject, clothing, setting, lighting, style, quality). No preamble, no explanation, just the prompt.",
     "ollama_improve_prompt": "Rewrite the following text-to-image prompt to be more vivid and detailed while keeping the same subject and intent. Output ONLY the improved prompt (comma-separated), no preamble.\n\nPROMPT: {prompt}",
@@ -9,60 +8,65 @@
     "ollama_vision_blocklist": [],
     "ollama_keep_alive": 0,
     "ollama_cpu": false,
-    "job_queue": {"enabled": true},
+    "job_queue": {
+        "enabled": true
+    },
     "_job_queue_help": "Job queue panel ('+ Queue' snapshots all settings incl. model; 'Run queue' chains them; ⏸ Pause finishes the current job then halts; Stop interrupts it mid-render and the interrupted job STAYS queued). The queue is saved to cache/queue.json after every change and every job, and restored at startup (persist=false to disable). enabled=false removes the UI entirely (zero cost).",
-    "tag_autocomplete": {"enabled": true, "max_results": 8, "sources": ["https://raw.githubusercontent.com/DominikDoom/a1111-sd-webui-tagcomplete/main/tags/danbooru.csv"]},
+    "tag_autocomplete": {
+        "enabled": true,
+        "max_results": 8,
+        "sources": [
+            "https://raw.githubusercontent.com/DominikDoom/a1111-sd-webui-tagcomplete/main/tags/danbooru.csv"
+        ]
+    },
     "_tag_autocomplete_help": "Prompt/negative autocomplete. CSVs in sources are downloaded once to tags/ (any .csv dropped there is also used, rich 'name,cat,count,aliases' or one word per line) + local __wildcards__. enabled=false: no download, no JS injected (zero cost).",
-    "xyz_grid": {"enabled": true, "max_jobs": 100, "thumb": 512, "suggest": true},
+    "xyz_grid": {
+        "enabled": true,
+        "max_jobs": 100,
+        "thumb": 512,
+        "suggest": true
+    },
     "_xyz_grid_help": "X/Y/Z comparison grid (needs job_queue). Each combo becomes a queued job; an annotated contact sheet is assembled per Z value. max_jobs caps the combo count; thumb = cell size in px; suggest = contextual value suggestions (placeholder + fill button) per axis.",
-    "load_progress": {"enabled": true, "target_vram_gb": 14.0, "heartbeat_s": 2.0},
+    "load_progress": {
+        "enabled": true,
+        "target_vram_gb": 14.0,
+        "heartbeat_s": 2.0
+    },
     "_load_progress_help": "Live feedback while a model loads (first run downloads from HF = minutes of silence otherwise). Terminal shows a rewritten '[crispz][load] ... 45s | 3.2 GB in VRAM' line every heartbeat_s; the UI progress bar advances (VRAM allocated / target_vram_gb). enabled=false loads directly with no monitor thread (zero cost).",
     "caption_model": "blip-large",
     "_caption_model_help": "Local auto-describe model (no Ollama): blip-large (default) | blip-base",
     "improve_local_keywords": "highly detailed, sharp focus, professional photography, intricate details, natural lighting, high quality, 8k",
     "_improve_local_keywords_help": "Quality tags appended by 'Improve prompt' when no Ollama model is selected (local rule-based fallback, no model).",
-
-    "_performance_presets_help": "name -> [steps, guidance] or [steps, guidance, lora_file]. A 3rd value applies that LoRA (slot 1) when the preset is selected. A distilled Lightning LoRA enables 8 steps + guidance 1 (no CFG) = fast & good. Put the LoRA in loras_dir and set its filename here.",
+    "_performance_presets_help": "name -> [steps, guidance] or [steps, guidance, lora_file]. NB klein: the model is step-wise distilled, guidance is IGNORED by diffusers (measured bit-identical from 1.0 to 8.0). Only the step count matters here; the guidance value is kept at 1.0 so the UI never suggests an active CFG.",
     "performance_presets": {
-            "Lightning (8 steps)": [
-                    8,
-                    1.0,
-                    "PUT_YOUR_LIGHTNING_LORA.safetensors"
-            ],
-            "Balanced (24 steps)": [
-                    24,
-                    4.0
-            ],
-            "Quality (40 steps)": [
-                    40,
-                    4.0
-            ]
+        "Turbo (4 steps)": [
+            4,
+            1.0
+        ],
+        "Quality (8 steps)": [
+            8,
+            1.0
+        ]
     },
-    "_model_profiles_help": "Auto steps/guidance when a checkpoint is selected, matched by substring on the file name (first match wins, in order). Keep specific keys (rapid, lightning) BEFORE generic ones (qwen): Lightning/Rapid merges are distilled -> few steps, guidance 1.0 (CFG off).",
+    "_model_profiles_help": "Auto steps/guidance when a checkpoint is selected, matched by substring on the file name (first match wins, in order). klein is distilled: 4 steps, guidance 1.0 (no CFG at all).",
     "model_profiles": {
-            "aio": {
-                    "steps": 4,
-                    "guidance": 1.0
-            },
-            "rapid": {
-                    "steps": 8,
-                    "guidance": 1.0
-            },
-            "lightning": {
-                    "steps": 8,
-                    "guidance": 1.0
-            },
-            "qwen": {
-                    "steps": 30,
-                    "guidance": 4.0
-            },
-            "edit": {
-                    "steps": 30,
-                    "guidance": 4.0
-            }
+        "klein": {
+            "steps": 4,
+            "guidance": 1.0
+        },
+        "flux-2": {
+            "steps": 4,
+            "guidance": 1.0
+        },
+        "flux2": {
+            "steps": 4,
+            "guidance": 1.0
+        }
     },
-    "default_model_profile": {"steps": 30, "guidance": 4.0},
-
+    "default_model_profile": {
+        "steps": 4,
+        "guidance": 1.0
+    },
     "_default_loras_help": "LoRAs applied at startup (in loras_dir). Names or [name, weight]. Empty = none. Set a Lightning LoRA here + default_performance 'Lightning (8 steps)' + default_gen_steps 8 + default_guidance 1.0 for a fast default.",
     "default_loras": [],
     "_edit_loras_help": "Edit LoRA presets (Qwen-Image-Edit 2509/2511 task LoRAs from Hugging Face: photo-to-anime, relight, upscale-2k, multiple-angles...). Built-in list in cz_edit_loras.py; here you can ADD or REPLACE a preset ({\"repo\": ..., \"weights\": ..., \"prompt\": ..., \"inputs\": 1}) or REMOVE one (null). Applied on the EDIT pipe only (Reference (Omni) tab / protocol op edit), downloaded on first use.",
@@ -71,12 +75,8 @@
     "edit_loras_dir": "",
     "_edit_loras_enabled_help": "Initial state of the 'Edit LoRAs' checkbox (Models > LoRA). Off = the chosen preset is kept but not applied (quick with/without comparison).",
     "edit_loras_enabled": true,
-    "_edit_fast_help": "Initial 'Edit speed' (Reference (Omni) tab): Off | Auto (model profile) | Lightning 4 steps | Lightning 8 steps. Lightning stacks the lightx2v Lightning edit LoRA (2509/2511 picked from the edit model name) and forces N steps / CFG off. Auto = model_profiles of the edit model (Rapid-AIO 'aio' -> 4 steps).",
-    "edit_fast": "Off",
-    "_default_guidance_help": "Qwen 'guidance' = true_cfg_scale (real CFG, enables negative prompt). ~3-5 recommended.",
+    "_default_guidance_help": "klein has NO usable guidance: the model is step-wise distilled and diffusers ignores guidance_scale (verified, tests/test_klein_guidance.py). The slider is kept for UI/API compatibility but changes nothing. Negative prompts are inert for the same reason - the CLI protocol announces supports.negative = false.",
     "_default_refine_help": "Upscale/refine pass OFF by default (txt2img only = fast startup). NB: the diffusion refine needs a non-quantized base; with a GGUF model it is skipped/limited. Enable per-run via the Upscale checkbox.",
-    "_zimage_omni_base_help": "Base edit repo providing text-encoder/VAE/processor when 'zimage_omni_model' is a .gguf transformer. Default Qwen/Qwen-Image-Edit-2509 (downloads ~17GB once).",
-    "zimage_omni_base": "Qwen/Qwen-Image-Edit-2509",
     "default_prompt": "",
     "default_negative_prompt": "",
     "default_styles": [],
@@ -87,18 +87,17 @@
     "force_ratio_mode": "crop",
     "_force_ratio_extend_denoise_help": "Extend mode only: after outpainting the bands, one LIGHT img2img pass over the extended image blends the band seams - only the bands + a feathered transition margin are composited from it, the original centre stays untouched. 0 = off. 0.15-0.30 sensible.",
     "force_ratio_extend_denoise": 0.22,
-    "default_performance": "Balanced (24 steps)",
+    "default_performance": "Turbo (4 steps)",
     "default_width": 1024,
     "default_height": 1024,
-    "default_gen_steps": 24,
-    "default_guidance": 4.0,
+    "default_gen_steps": 4,
+    "default_guidance": 1.0,
     "default_sampler": "euler",
     "default_schedule": "sgm_uniform",
     "default_image_number": 1,
     "default_seed": -1,
-
     "default_factor": 2.0,
-    "default_denoise": 0.30,
+    "default_denoise": 0.3,
     "default_refine": false,
     "default_refine_first": false,
     "default_refine_steps": 12,
@@ -106,15 +105,14 @@
     "default_overlap": 32,
     "default_refine_tile": 0,
     "default_refine_overlap": 64,
-    "default_cpu_offload": "model",
+    "default_cpu_offload": "none",
     "attention_slice_above": 1664,
     "auto_refine_tile_above": 1664,
     "auto_refine_tile": "auto",
     "auto_refine_tile_min": 768,
     "auto_refine_tile_max": 1024,
-    "refine_tile_denoise_cap": 0.40,
+    "refine_tile_denoise_cap": 0.4,
     "refine_tile_prompt": "",
-
     "checkpoints_dir": "",
     "loras_dir": "",
     "_loras_extra_dirs_help": "Extra LoRA folders merged with loras_dir (list, or 'a;b'). Same file name: loras_dir wins. Edit presets and Lightning LoRAs already present there are reused instead of downloaded.",
@@ -126,7 +124,6 @@
     "lora_weight_max": 2.0,
     "_lora_weight_range_help": "Min/max of the LoRA 'Weight' sliders (Models > LoRA). NEGATIVE weights are allowed and useful: a LoRA applied at a negative weight pushes AWAY from what it was trained on (e.g. a 'skinny slider' LoRA at -1 gives the opposite effect, an 'age slider' at -0.5 makes the subject younger/older the other way). 0 = LoRA has no effect. Typical range: -2..2; beyond ~±1.5 most LoRAs burn/deform the image. Set lora_weight_min to 0 if you never want negatives. If the values are not numbers, or min >= max, the app falls back to -2..2 and logs it.",
     "lora_slots": 3,
-    "zimage_omni_model": "Qwen/Qwen-Image-Edit-2509",
     "_hand_detailer_help": "Tick '🖐 Detail hands' by default: after each render, detected hands are re-refined at high resolution like faces are. Needs the optional 'ultralytics' package (requirements-extra.txt); without it the feature logs a message and does nothing.",
     "hand_detailer": false,
     "_hand_detailer_denoise_help": "Strength of the per-hand refine pass (0.1-0.7). Hands usually want more than faces (0.4-0.5) to fix fingers; too high invents a different hand.",
@@ -170,7 +167,6 @@
     "faceswap_parser_url": "https://huggingface.co/facefusion/models-3.0.0/resolve/main/bisenet_resnet_34.onnx",
     "faceswap_color_match": true,
     "_faceswap_color_match_help": "Match the swapped face's colour statistics (LAB mean/std) to the original face, so the source photo's skin tone and exposure do not show through.",
-
     "default_save_mode": "local",
     "default_output_dir": "out",
     "default_output_format": "png",
@@ -184,7 +180,11 @@
     "civitai_api_key": "",
     "auth": "",
     "_auth_help": "Login page for the UI. Empty = no login (fine on localhost). Set to \"user:password\" (several accounts: \"a:pw1,b:pw2\") BEFORE exposing crispz-studio on your LAN or through a tunnel (cloudflared etc.) - otherwise anyone with the URL can generate images and browse/delete your outputs. Also settable via --auth or the CRISPZ_AUTH env var.",
-    "civitai_batch": {"enabled": true, "sleep": 0.5, "check_updates": true},
+    "civitai_batch": {
+        "enabled": true,
+        "sleep": 0.5,
+        "check_updates": true
+    },
     "_civitai_batch_help": "Batch CivitAI enrichment. enabled=true shows the '🔄 Fetch all missing' button on the Asset Browser LoRAs/Models tabs and lets cz_civitai_batch.py (civitai_index.bat/.sh) run. sleep = seconds between requests (rate-limit friendly); check_updates = also flag models that have a newer version on CivitAI. enabled=false hides the button (per-model 🔎 fetch still works).",
     "asset_browser": {
         "enabled": false,
@@ -197,20 +197,23 @@
         "cache_dir": "",
         "_cache_dir_help": "Where thumbnails are cached. Empty (default) = <app>/cache (the app folder, gitignored - usually a fast disk, much faster than an HDD/NAS output folder). 'output' = next to the images (<out>/_index/thumbs, relative URLs). Any path = custom cache (e.g. an SSD): thumbnails go to <cache_dir>/crispz-thumbs/<slug>/. Also settable in the UI (Save > Asset Browser). Safe to delete at any time (rebuilt on demand)."
     },
-
-    "cli_protocol": {"instance_url": "http://127.0.0.1:7860"},
+    "cli_protocol": {
+        "instance_url": "http://127.0.0.1:7860"
+    },
     "_cli_protocol_help": "Family CLI protocol v1 (czp.bat / cz_protocol.py): JSON spec in, JSON out. 'czp gen --spec spec.json' ROUTES to the app instance running at instance_url (its queue serializes the GPU, model stays warm) and only loads the pipeline itself when no instance answers (night batch; or force with --local / --remote URL). 'czp caps' prints this tool's capabilities + whether an instance is running. Exit codes: 0 ok, 1 run error, 2 bad spec, 3 unsupported op/protocol, 4 no route. One image per call - the caller loops.",
-
     "provenance_watermark": "off",
     "_provenance_watermark_help": "on = embed an invisible TrustMark watermark (Adobe, open source) in every saved image, for machine-readable AI disclosure (EU AI Act art. 50, applicable Aug 2 2026). Needs 'pip install trustmark' (see requirements-extra.txt); model (~40 MB) downloads on first use, then ~0.1s/image on CPU (the GPU is never touched). off (default) = no watermark. Read watermarks anytime via PNG Info > Check invisible watermark, or cz.bat --provenance -i img.png.",
     "provenance_wm_id": "crispzAI",
     "_provenance_wm_id_help": "Identifier embedded in the TrustMark watermark. Max 9 ASCII characters (error-corrected payload is ~68 bits) - longer values are truncated. E.g. your studio tag.",
-
     "dequant_cache": "auto",
     "_dequant_cache_help": "Where the bf16 result of a FP8/INT8 dequant is cached, so the SAME checkpoint loads in seconds next time instead of minutes. 'auto' (default) = <app>/cache/dequant (gitignored), any path = custom folder, 'off' = never cache. Each entry weighs as much as the BF16 build; safe to delete any time (rebuilt on demand).",
     "dequant_cache_max_gb": 60,
     "_dequant_cache_max_gb_help": "Size cap of that cache in GB; least-recently-used entries are evicted past it. 0 = unlimited.",
     "convert_device": "auto",
     "_convert_device_help": "Where the one-time dequantization math of FP8/INT8 checkpoints runs. 'auto' (default) = GPU if available (tensor-by-tensor, a few hundred MB of VRAM at peak - the CPU path is memory-bandwidth-bound and was measured at ~9 min on a 12.9B INT8 in crispz-krea2), 'cpu' = never touch the GPU (pick this if you convert while rendering elsewhere).",
-    "log_level": "info"
+    "log_level": "info",
+    "_default_negative_prompt_help": "Inert on klein (distilled, no CFG). Kept empty on purpose.",
+    "_omni_help": "klein needs NO separate edit model: multi-reference editing (up to 4 refs) is served by the base pipeline itself. The keys 'zimage_omni_model' / 'zimage_omni_base' of crispz-qwen-edit are gone on purpose - do not re-add them at merge time.",
+    "zimage_model": "black-forest-labs/FLUX.2-klein-4B",
+    "_zimage_model_help": "Base repo (HF) or a local diffusers folder / single-file checkpoint. Apache 2.0. Do NOT switch to FLUX.2-klein-9B: non-commercial licence, see FORK.md."
 }

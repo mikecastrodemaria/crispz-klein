@@ -1,153 +1,160 @@
-"""Registre des LoRA d'EDITION Qwen-Image-Edit (presets "fast lazy load").
+"""Registre des LoRA d'EDITION. VIDE chez crispz-klein.
 
-Source: github.com/PRITHIVSAKTHIUR/Qwen-Image-Edit-2511-LoRAs-Fast-Lazy-Load
-(ADAPTER_SPECS). Chaque preset = un LoRA Hugging Face entraine pour une tache
-d'edition (photo -> anime, relighting, upscale 2K, angles de camera...). Ils
-n'ont PAS de trigger word: l'instruction en langage naturel suffit
-(`prompt` ci-dessous = exemple de l'upstream).
+Le catalogue de l'amont (crispz-qwen-edit) liste des LoRA entrainees pour
+Qwen-Image-Edit 2509/2511. Elles sont INCOMPATIBLES avec FLUX.2 Klein:
+architecture differente, cles differentes, les charger produirait au mieux une
+erreur, au pire des poids incoherents. Les annoncer dans `caps.edit_loras`
+reviendrait a promettre une capacite qui casse -- exactement ce que la regle
+maison interdit (degradation annoncee, jamais silencieuse).
 
-Chargement paresseux: rien n'est telecharge a l'import. `resolve(name)` rend
-le chemin local du .safetensors et le telecharge depuis le hub a la premiere
-demande, dans `<LORAS_DIR>/_hf-edit/<adapter_name>.safetensors` (nom ASCII
-stable: plusieurs fichiers upstream ont des noms chinois ou des espaces).
-Une fois sur disque, c'est un LoRA ordinaire: `--lora`, `<lora:...>`,
-`caps.loras` et le dropdown LoRA du base le voient sans code special.
+`EDIT_LORA_SPECS` est donc vide et le catalogue amont est conserve juste en
+dessous, commente, comme reference de merge: quand des LoRA d'edition FLUX.2
+Klein existeront, elles se declarent ici, au meme format.
 
-Ces LoRA visent le pipe d'EDITION (cz_pipeline.generate_omni), pas le
-txt2img: cz_pipeline garde un jeu separe (EDIT_LORAS / set_edit_loras).
+Toute la mecanique (telechargement paresseux, resolution de chemin, index
+local, overrides config) est INCHANGEE et fonctionne des qu'une entree est
+ajoutee. `speed_names()` / `resolve_speed()` (presets Lightning) ne renvoient
+plus rien non plus: klein est deja distille a 4 steps, il n'y a pas de LoRA
+d'acceleration a empiler.
 
-Surcharge possible dans config.txt:
-    "edit_loras_dir": "",          # dossier des telechargements (defaut <loras_dir>/_hf-edit)
+Surcharge possible dans config.txt (meme format que l'amont):
+    "edit_loras_dir": "",
     "edit_loras": {"Mon-Preset": {"repo": "...", "weights": "x.safetensors",
                                   "adapter_name": "mon-preset", "prompt": "...",
-                                  "inputs": 1}, "Anime-V2": null}   # null = retire
+                                  "inputs": 1}}
 """
 import os
 
 from cz_core import CONFIG, _log, _dbg
 
 # Ordre = ordre du dropdown. inputs = nombre d'images attendu (2 = input + reference).
-EDIT_LORA_SPECS = {
-    "Multiple-Angles": {
-        "repo": "dx8152/Qwen-Edit-2509-Multiple-angles",
-        "weights": "镜头转换.safetensors",
-        "adapter_name": "multiple-angles",
-        "prompt": "Rotate the camera 45 degrees to the right.",
-        "inputs": 1, "base": "2509",
-        # meme fichier tel que Civitai le nomme (bibliotheques existantes)
-        "local_names": ["Qwen-Edit-2509-Multiple-angles.safetensors"]},
-    "Photo-to-Anime": {
-        "repo": "autoweeb/Qwen-Image-Edit-2509-Photo-to-Anime",
-        "weights": "Qwen-Image-Edit-2509-Photo-to-Anime_000001000.safetensors",
-        "adapter_name": "photo-to-anime",
-        "prompt": "Transform into anime.",
-        "inputs": 1, "base": "2509"},
-    "Anime-V2": {
-        "repo": "prithivMLmods/Qwen-Image-Edit-2511-Anime",
-        "weights": "Qwen-Image-Edit-2511-Anime-2000.safetensors",
-        "adapter_name": "anime-v2",
-        "prompt": "Transform into anime (while preserving the background and remaining "
-                  "elements maintaining realism and original details.)",
-        "inputs": 1, "base": "2511"},
-    "Light-Migration": {
-        "repo": "dx8152/Qwen-Edit-2509-Light-Migration",
-        "weights": "参考色调.safetensors",
-        "adapter_name": "light-migration",
-        "prompt": "Refer to the color tone, remove the original lighting from Image 1, "
-                  "and relight Image 1 based on the lighting and color tone of Image 2.",
-        "inputs": 2, "base": "2509"},
-    "Upscaler": {
-        "repo": "starsfriday/Qwen-Image-Edit-2511-Upscale2K",
-        "weights": "qwen_image_edit_2511_upscale.safetensors",
-        "adapter_name": "upscale-2k",
-        "prompt": "Upscale this picture to 4K resolution.",
-        "inputs": 1, "base": "2511"},
-    "Style-Transfer": {
-        "repo": "zooeyy/Style-Transfer",
-        "weights": "Style Transfer-Alpha-V0.1.safetensors",
-        "adapter_name": "style-transfer",
-        "prompt": "Convert Image 1 to the style of Image 2.",
-        "inputs": 2, "base": "2511"},
-    "Manga-Tone": {
-        "repo": "nappa114514/Qwen-Image-Edit-2509-Manga-Tone",
-        "weights": "tone001.safetensors",
-        "adapter_name": "manga-tone",
-        "prompt": "Paint with manga tone.",
-        "inputs": 1, "base": "2509"},
-    "Anything2Real": {
-        "repo": "lrzjason/Anything2Real_2601",
-        "weights": "anything2real_2601.safetensors",
-        "adapter_name": "anything2real",
-        "prompt": "Change the picture to realistic photograph.",
-        "inputs": 1, "base": "2511"},
-    "Fal-Multiple-Angles": {
-        "repo": "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA",
-        "weights": "qwen-image-edit-2511-multiple-angles-lora.safetensors",
-        "adapter_name": "fal-multiple-angles",
-        "prompt": "Front-right quarter view.",
-        "inputs": 1, "base": "2511"},
-    "Polaroid-Photo": {
-        "repo": "prithivMLmods/Qwen-Image-Edit-2511-Polaroid-Photo",
-        "weights": "Qwen-Image-Edit-2511-Polaroid-Photo.safetensors",
-        "adapter_name": "polaroid-photo",
-        "prompt": "cinematic polaroid with soft grain subtle vignette gentle lighting white "
-                  "frame handwritten photographed preserving realistic texture and details.",
-        "inputs": 1, "base": "2511"},
-    "Unblur-Anything": {
-        "repo": "prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale",
-        "weights": "Qwen-Image-Edit-Unblur-Upscale_15.safetensors",
-        "adapter_name": "unblur-anything",
-        "prompt": "Unblur and upscale.",
-        "inputs": 1, "base": "2511"},
-    "Midnight-Noir-Eyes-Spotlight": {
-        "repo": "prithivMLmods/Qwen-Image-Edit-2511-Midnight-Noir-Eyes-Spotlight",
-        "weights": "Qwen-Image-Edit-2511-Midnight-Noir-Eyes-Spotlight.safetensors",
-        "adapter_name": "midnight-noir-eyes-spotlight",
-        "prompt": "Transform into Midnight Noir Eyes Spotlight.",
-        "inputs": 1, "base": "2511"},
-    "Hyper-Realistic-Portrait": {
-        "repo": "prithivMLmods/Qwen-Image-Edit-2511-Hyper-Realistic-Portrait",
-        "weights": "HRP_20.safetensors",
-        "adapter_name": "hyper-realistic-portrait",
-        "prompt": "Transform into a hyper-realistic face portrait.",
-        "inputs": 1, "base": "2511"},
-    "Ultra-Realistic-Portrait": {
-        "repo": "prithivMLmods/Qwen-Image-Edit-2511-Ultra-Realistic-Portrait",
-        "weights": "URP_20.safetensors",
-        "adapter_name": "ultra-realistic-portrait",
-        "prompt": "Ultra-realistic portrait.",
-        "inputs": 1, "base": "2511"},
-    "Pixar-Inspired-3D": {
-        "repo": "prithivMLmods/Qwen-Image-Edit-2511-Pixar-Inspired-3D",
-        "weights": "PI3_20.safetensors",
-        "adapter_name": "pixar-inspired-3d",
-        "prompt": "Transform it into Pixar-inspired 3D.",
-        "inputs": 1, "base": "2511"},
-    "Noir-Comic-Book": {
-        "repo": "prithivMLmods/Qwen-Image-Edit-2511-Noir-Comic-Book-Panel",
-        "weights": "Noir-Comic-Book-Panel_20.safetensors",
-        "adapter_name": "noir-comic-book",
-        "prompt": "Transform into a noir comic book style.",
-        "inputs": 1, "base": "2511"},
-    "Any-Light": {
-        "repo": "lilylilith/QIE-2511-MP-AnyLight",
-        "weights": "QIE-2511-AnyLight_.safetensors",
-        "adapter_name": "any-light",
-        "prompt": "Apply the lighting from image 2 to image 1.",
-        "inputs": 2, "base": "2511"},
-    "Studio-DeLight": {
-        "repo": "prithivMLmods/QIE-2511-Studio-DeLight",
-        "weights": "QIE-2511-Studio-DeLight-5000.safetensors",
-        "adapter_name": "studio-delight",
-        "prompt": "Neutral uniform lighting. Preserve identity and composition.",
-        "inputs": 1, "base": "2511"},
-    "Cinematic-FlatLog": {
-        "repo": "prithivMLmods/QIE-2511-Cinematic-FlatLog-Control",
-        "weights": "QIE-2511-Cinematic-FlatLog-Control-3200.safetensors",
-        "adapter_name": "flat-log",
-        "prompt": "Transform into a cinematic flat log.",
-        "inputs": 1, "base": "2511"},
-}
+# Ordre = ordre du dropdown. inputs = nombre d'images attendu (2 = input + reference).
+# VIDE: aucune LoRA d'edition FLUX.2 Klein publiee a ce jour (2026-09-05).
+EDIT_LORA_SPECS = {}
+
+# --- Catalogue Qwen-Image-Edit de l'amont, conserve comme REFERENCE DE MERGE.
+# --- Ne PAS le reactiver tel quel: ces poids ne chargent pas sur FLUX.2.
+# EDIT_LORA_SPECS = {
+#     "Multiple-Angles": {
+#         "repo": "dx8152/Qwen-Edit-2509-Multiple-angles",
+#         "weights": "镜头转换.safetensors",
+#         "adapter_name": "multiple-angles",
+#         "prompt": "Rotate the camera 45 degrees to the right.",
+#         "inputs": 1, "base": "2509",
+#         # meme fichier tel que Civitai le nomme (bibliotheques existantes)
+#         "local_names": ["Qwen-Edit-2509-Multiple-angles.safetensors"]},
+#     "Photo-to-Anime": {
+#         "repo": "autoweeb/Qwen-Image-Edit-2509-Photo-to-Anime",
+#         "weights": "Qwen-Image-Edit-2509-Photo-to-Anime_000001000.safetensors",
+#         "adapter_name": "photo-to-anime",
+#         "prompt": "Transform into anime.",
+#         "inputs": 1, "base": "2509"},
+#     "Anime-V2": {
+#         "repo": "prithivMLmods/Qwen-Image-Edit-2511-Anime",
+#         "weights": "Qwen-Image-Edit-2511-Anime-2000.safetensors",
+#         "adapter_name": "anime-v2",
+#         "prompt": "Transform into anime (while preserving the background and remaining "
+#                   "elements maintaining realism and original details.)",
+#         "inputs": 1, "base": "2511"},
+#     "Light-Migration": {
+#         "repo": "dx8152/Qwen-Edit-2509-Light-Migration",
+#         "weights": "参考色调.safetensors",
+#         "adapter_name": "light-migration",
+#         "prompt": "Refer to the color tone, remove the original lighting from Image 1, "
+#                   "and relight Image 1 based on the lighting and color tone of Image 2.",
+#         "inputs": 2, "base": "2509"},
+#     "Upscaler": {
+#         "repo": "starsfriday/Qwen-Image-Edit-2511-Upscale2K",
+#         "weights": "qwen_image_edit_2511_upscale.safetensors",
+#         "adapter_name": "upscale-2k",
+#         "prompt": "Upscale this picture to 4K resolution.",
+#         "inputs": 1, "base": "2511"},
+#     "Style-Transfer": {
+#         "repo": "zooeyy/Style-Transfer",
+#         "weights": "Style Transfer-Alpha-V0.1.safetensors",
+#         "adapter_name": "style-transfer",
+#         "prompt": "Convert Image 1 to the style of Image 2.",
+#         "inputs": 2, "base": "2511"},
+#     "Manga-Tone": {
+#         "repo": "nappa114514/Qwen-Image-Edit-2509-Manga-Tone",
+#         "weights": "tone001.safetensors",
+#         "adapter_name": "manga-tone",
+#         "prompt": "Paint with manga tone.",
+#         "inputs": 1, "base": "2509"},
+#     "Anything2Real": {
+#         "repo": "lrzjason/Anything2Real_2601",
+#         "weights": "anything2real_2601.safetensors",
+#         "adapter_name": "anything2real",
+#         "prompt": "Change the picture to realistic photograph.",
+#         "inputs": 1, "base": "2511"},
+#     "Fal-Multiple-Angles": {
+#         "repo": "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA",
+#         "weights": "qwen-image-edit-2511-multiple-angles-lora.safetensors",
+#         "adapter_name": "fal-multiple-angles",
+#         "prompt": "Front-right quarter view.",
+#         "inputs": 1, "base": "2511"},
+#     "Polaroid-Photo": {
+#         "repo": "prithivMLmods/Qwen-Image-Edit-2511-Polaroid-Photo",
+#         "weights": "Qwen-Image-Edit-2511-Polaroid-Photo.safetensors",
+#         "adapter_name": "polaroid-photo",
+#         "prompt": "cinematic polaroid with soft grain subtle vignette gentle lighting white "
+#                   "frame handwritten photographed preserving realistic texture and details.",
+#         "inputs": 1, "base": "2511"},
+#     "Unblur-Anything": {
+#         "repo": "prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale",
+#         "weights": "Qwen-Image-Edit-Unblur-Upscale_15.safetensors",
+#         "adapter_name": "unblur-anything",
+#         "prompt": "Unblur and upscale.",
+#         "inputs": 1, "base": "2511"},
+#     "Midnight-Noir-Eyes-Spotlight": {
+#         "repo": "prithivMLmods/Qwen-Image-Edit-2511-Midnight-Noir-Eyes-Spotlight",
+#         "weights": "Qwen-Image-Edit-2511-Midnight-Noir-Eyes-Spotlight.safetensors",
+#         "adapter_name": "midnight-noir-eyes-spotlight",
+#         "prompt": "Transform into Midnight Noir Eyes Spotlight.",
+#         "inputs": 1, "base": "2511"},
+#     "Hyper-Realistic-Portrait": {
+#         "repo": "prithivMLmods/Qwen-Image-Edit-2511-Hyper-Realistic-Portrait",
+#         "weights": "HRP_20.safetensors",
+#         "adapter_name": "hyper-realistic-portrait",
+#         "prompt": "Transform into a hyper-realistic face portrait.",
+#         "inputs": 1, "base": "2511"},
+#     "Ultra-Realistic-Portrait": {
+#         "repo": "prithivMLmods/Qwen-Image-Edit-2511-Ultra-Realistic-Portrait",
+#         "weights": "URP_20.safetensors",
+#         "adapter_name": "ultra-realistic-portrait",
+#         "prompt": "Ultra-realistic portrait.",
+#         "inputs": 1, "base": "2511"},
+#     "Pixar-Inspired-3D": {
+#         "repo": "prithivMLmods/Qwen-Image-Edit-2511-Pixar-Inspired-3D",
+#         "weights": "PI3_20.safetensors",
+#         "adapter_name": "pixar-inspired-3d",
+#         "prompt": "Transform it into Pixar-inspired 3D.",
+#         "inputs": 1, "base": "2511"},
+#     "Noir-Comic-Book": {
+#         "repo": "prithivMLmods/Qwen-Image-Edit-2511-Noir-Comic-Book-Panel",
+#         "weights": "Noir-Comic-Book-Panel_20.safetensors",
+#         "adapter_name": "noir-comic-book",
+#         "prompt": "Transform into a noir comic book style.",
+#         "inputs": 1, "base": "2511"},
+#     "Any-Light": {
+#         "repo": "lilylilith/QIE-2511-MP-AnyLight",
+#         "weights": "QIE-2511-AnyLight_.safetensors",
+#         "adapter_name": "any-light",
+#         "prompt": "Apply the lighting from image 2 to image 1.",
+#         "inputs": 2, "base": "2511"},
+#     "Studio-DeLight": {
+#         "repo": "prithivMLmods/QIE-2511-Studio-DeLight",
+#         "weights": "QIE-2511-Studio-DeLight-5000.safetensors",
+#         "adapter_name": "studio-delight",
+#         "prompt": "Neutral uniform lighting. Preserve identity and composition.",
+#         "inputs": 1, "base": "2511"},
+#     "Cinematic-FlatLog": {
+#         "repo": "prithivMLmods/QIE-2511-Cinematic-FlatLog-Control",
+#         "weights": "QIE-2511-Cinematic-FlatLog-Control-3200.safetensors",
+#         "adapter_name": "flat-log",
+#         "prompt": "Transform into a cinematic flat log.",
+#         "inputs": 1, "base": "2511"},
+# }
 
 SUBDIR = "_hf-edit"
 
@@ -331,27 +338,37 @@ def find_local(filenames, index=None):
 # un hf_token est necessaire).
 # ----------------------------------------------------------------------------
 AUTO_SPEED = "Auto (model profile)"
-SPEED_SPECS = {
-    "Lightning 4 steps": {
-        "steps": 4, "guidance": 1.0,
-        "files": {
-            "2509": ("lightx2v/Qwen-Image-Edit-2509-Lightning",
-                     "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors"),
-            "2511": ("lightx2v/Qwen-Image-Edit-2511-Lightning",
-                     "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors")}},
-    "Lightning 8 steps": {
-        "steps": 8, "guidance": 1.0,
-        "files": {
-            "2509": ("lightx2v/Qwen-Image-Edit-2509-Lightning",
-                     "Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors"),
-            "2511": ("lightx2v/Qwen-Image-Edit-2511-Lightning",
-                     "Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors")}},
-}
+# Presets Lightning: VIDES chez klein. Ces LoRA sont des accelerateurs pour
+# Qwen-Image-Edit (architecture differente) ET klein est DEJA distille a 4 steps:
+# il n'y a rien a accelerer. 'Edit speed' se reduit donc a 'Off'.
+SPEED_SPECS = {}
+
+# --- Reference de merge (amont Qwen). Ne PAS reactiver: incompatible FLUX.2.
+# SPEED_SPECS = {
+#     "Lightning 4 steps": {
+#         "steps": 4, "guidance": 1.0,
+#         "files": {
+#             "2509": ("lightx2v/Qwen-Image-Edit-2509-Lightning",
+#                      "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors"),
+#             "2511": ("lightx2v/Qwen-Image-Edit-2511-Lightning",
+#                      "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors")}},
+#     "Lightning 8 steps": {
+#         "steps": 8, "guidance": 1.0,
+#         "files": {
+#             "2509": ("lightx2v/Qwen-Image-Edit-2509-Lightning",
+#                      "Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors"),
+#             "2511": ("lightx2v/Qwen-Image-Edit-2511-Lightning",
+#                      "Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors")}},
+# }
 
 
 def speed_names():
-    """Choix du dropdown 'Edit speed' (sans 'Off', ajoute par cz_pipeline)."""
-    return [AUTO_SPEED] + list(SPEED_SPECS)
+    """Choix du dropdown 'Edit speed' (sans 'Off', ajoute par cz_pipeline).
+
+    Vide chez klein: le modele est deja distille a 4 steps et il n'existe pas de LoRA
+    Lightning FLUX.2 a empiler. Le dropdown se reduit donc a 'Off' cote cz_pipeline,
+    et caps.edit_fast n'annonce plus de mode qui echouerait."""
+    return []
 
 
 def edit_base_revision(omni_model):
