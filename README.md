@@ -1102,7 +1102,8 @@ GPU and the model stays warm) and only loads the pipeline itself when no
 instance answers (night batch; `--local`/`--remote URL` force a route).
 Ops: `gen`, `upscale` (`input` + `factor`/`denoise`; **`factor` 1 = pure img2img
 variation, no ESRGAN stage**), `edit` (image + instruction; needs an edit
-model - see `caps.supports.edit`). On `edit`, `spec.loras` accepts an edit preset
+model - see `caps.supports.edit`), `inpaint` (image + mask + local
+prompt: only the white area is redrawn, every engine). On `edit`, `spec.loras` accepts an edit preset
 name (`"Photo-to-Anime"`, `"upscale-2k:1.0"`, see `caps.edit_loras`) or a file, and
 lands on the edit pipe; `guidance` is applied there (distilled setups want 1.0),
 and an explicit `width`/`height` is passed to the pipe (Upscaler preset = 2x
