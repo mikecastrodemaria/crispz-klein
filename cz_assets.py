@@ -513,6 +513,22 @@ FOOOCUS_CSS = """
 .cz-lightbox img { max-width: 95vw; max-height: 95vh; object-fit: contain; }
 .cz-lightbox .cz-close { position: fixed; top: 14px; right: 26px; color: #fff;
   font-size: 44px; line-height: 1; cursor: pointer; font-weight: 300; }
+/* Onglet Reference (Omni): blocs aeres. En-tete = 2 colonnes (instructions + bouton |
+   statut du modele), refs 4 / 2 / 1 par ligne (min_width des colonnes Gradio = points de
+   rupture), controles 2/3 - 1/3. Les colonnes Gradio passent d'elles-memes les unes
+   sous les autres quand la largeur manque: ici on ne gere que les marges et les fonds. */
+.cz-omni-head, .cz-omni-controls {
+  gap: 16px !important; padding: 12px 16px; margin: 6px 0 10px;
+  border: 1px solid var(--border-color-primary); border-radius: 10px;
+  background: var(--block-background-fill); }
+.cz-omni-head .prose { padding: 4px 2px 8px; line-height: 1.5; }
+.cz-omni-status { min-height: 2.4em; padding: 10px 14px; border-radius: 8px;
+  background: var(--background-fill-secondary); border: 1px solid var(--border-color-primary);
+  word-break: break-word; }
+.cz-omni-status .prose { padding: 0; }
+.cz-omni-refs { gap: 12px !important; margin: 4px 0 10px; }
+.cz-omni-refs > .column { min-width: 300px; }
+.cz-omni-edit-btn { margin-top: 4px; }
 """
 
 

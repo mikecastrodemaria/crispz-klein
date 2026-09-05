@@ -3369,56 +3369,69 @@ def build_ui():
                             inpaint_status = gr.Markdown("")
 
                         with gr.Tab("Reference (Omni)", visible=omni_on):
-                            gr.Markdown("*Edit an image from an instruction: put it in **Ref 1** "
+                            # Mise en page responsive (min_width des colonnes = points de
+                            # rupture Gradio): en-tete en 2 blocs (instructions + bouton |
+                            # statut du modele), refs 4 / 2 / 1 par ligne selon la largeur,
+                            # controles en 2/3 - 1/3. Le CSS .cz-omni-* (cz_assets) aere.
+                            with gr.Row(elem_classes="cz-omni-head", equal_height=False):
+                                with gr.Column(scale=3, min_width=340):
+                                    gr.Markdown(
+                                        "*Edit an image from an instruction: put it in **Ref 1** "
                                         "(Ref 2 = light/style reference for 2-image presets, up to "
                                         "4 refs to compose), pick an Edit LoRA preset if you want, "
                                         "write the instruction in the prompt, then click **Edit** "
                                         "below (or Generate with Input mode = Reference (Omni)). "
                                         "Steps/guidance: Settings, unless Edit speed is on.*")
-                            with gr.Row():
-                                omni_check_btn2 = gr.Button("Check Omni model availability", size="sm")
-                                omni_status2 = gr.Markdown("")
-                            with gr.Row():
-                                ref1 = _crop_input("Ref 1", 220)
-                                ref2 = _crop_input("Ref 2", 220)
-                            with gr.Row():
-                                ref3 = _crop_input("Ref 3", 220)
-                                ref4 = _crop_input("Ref 4", 220)
+                                    omni_check_btn2 = gr.Button("Check Omni model availability",
+                                                                size="sm")
+                                with gr.Column(scale=2, min_width=300):
+                                    omni_status2 = gr.Markdown("", elem_classes="cz-omni-status")
+                            with gr.Row(elem_classes="cz-omni-refs"):
+                                with gr.Column(min_width=300):
+                                    ref1 = _crop_input("Ref 1", 220)
+                                with gr.Column(min_width=300):
+                                    ref2 = _crop_input("Ref 2", 220)
+                                with gr.Column(min_width=300):
+                                    ref3 = _crop_input("Ref 3", 220)
+                                with gr.Column(min_width=300):
+                                    ref4 = _crop_input("Ref 4", 220)
                             # Presets d'edition (LoRA HF "Qwen-Image-Edit-2511 fast lazy
                             # load"): poses sur le pipe d'EDITION seulement, telecharges a
                             # la premiere selection. Case ON/OFF dans Models > LoRA.
-                            with gr.Row():
-                                edit_lora_dd = gr.Dropdown(
-                                    choices=_edit_lora_choices(), value="None",
-                                    label="Edit LoRA (Qwen-Image-Edit-2511 fast presets)",
-                                    info="✓ = on disk, ⬇ = fetched from Hugging Face on first "
-                                         "use. Photo-to-Anime, Any-Light, Upscaler, "
-                                         "Multiple-Angles... No trigger word: describe the edit.",
-                                    scale=3)
-                                edit_lora_w = gr.Slider(cz_pipeline.LORA_WEIGHT_MIN,
-                                                        cz_pipeline.LORA_WEIGHT_MAX,
-                                                        value=1.0, step=0.05,
-                                                        label="Edit LoRA weight", scale=2,
-                                                        elem_classes="cz-lora-weight")
-                            with gr.Row():
-                                edit_lora_prompt_btn = gr.Button("Use example prompt", size="sm")
-                                edit_lora_refresh_btn = gr.Button("Refresh presets", size="sm")
-                            edit_lora_status = gr.Markdown("")
+                            with gr.Row(elem_classes="cz-omni-controls", equal_height=False):
+                                with gr.Column(scale=2, min_width=360):
+                                    edit_lora_dd = gr.Dropdown(
+                                        choices=_edit_lora_choices(), value="None",
+                                        label="Edit LoRA (Qwen-Image-Edit-2511 fast presets)",
+                                        info="✓ = on disk, ⬇ = fetched from Hugging Face on first "
+                                             "use. Photo-to-Anime, Any-Light, Upscaler, "
+                                             "Multiple-Angles... No trigger word: describe the edit.")
+                                    with gr.Row():
+                                        edit_lora_prompt_btn = gr.Button("Use example prompt", size="sm")
+                                        edit_lora_refresh_btn = gr.Button("Refresh presets", size="sm")
+                                with gr.Column(scale=1, min_width=260):
+                                    edit_lora_w = gr.Slider(cz_pipeline.LORA_WEIGHT_MIN,
+                                                            cz_pipeline.LORA_WEIGHT_MAX,
+                                                            value=1.0, step=0.05,
+                                                            label="Edit LoRA weight",
+                                                            elem_classes="cz-lora-weight")
+                                    edit_lora_status = gr.Markdown("", elem_classes="cz-omni-status")
                             # Mode rapide de l'edition: Lightning (LoRA empilee, 4/8 steps,
                             # CFG off) ou Auto (modele deja distille: Rapid-AIO, merge).
-                            with gr.Row():
-                                edit_speed_dd = gr.Dropdown(
-                                    choices=cz_pipeline.edit_speed_choices(),
-                                    value=_initial_edit_speed(),
-                                    label="Edit speed",
-                                    info="Lightning N steps = stacks the Lightning edit LoRA "
-                                         "(2509/2511 picked from the edit model), N steps, "
-                                         "CFG off. Auto = steps/guidance from the model "
-                                         "profile (Rapid-AIO, Lightning merges). Off = Settings.",
-                                    scale=3)
-                                edit_speed_status = gr.Markdown("", elem_classes="cz-inline-status")
+                            with gr.Row(elem_classes="cz-omni-controls", equal_height=False):
+                                with gr.Column(scale=2, min_width=360):
+                                    edit_speed_dd = gr.Dropdown(
+                                        choices=cz_pipeline.edit_speed_choices(),
+                                        value=_initial_edit_speed(),
+                                        label="Edit speed",
+                                        info="Lightning N steps = stacks the Lightning edit LoRA "
+                                             "(2509/2511 picked from the edit model), N steps, "
+                                             "CFG off. Auto = steps/guidance from the model "
+                                             "profile (Rapid-AIO, Lightning merges). Off = Settings.")
+                                with gr.Column(scale=1, min_width=260):
+                                    edit_speed_status = gr.Markdown("", elem_classes="cz-omni-status")
                             omni_edit_btn = gr.Button("✏️ Edit (Ref 1 + prompt -> image)",
-                                                      variant="primary")
+                                                      variant="primary", elem_classes="cz-omni-edit-btn")
 
                         with gr.Tab("Face Swap"):
                             gr.Markdown("*Post-process: replace the face in the result with this "
