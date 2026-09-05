@@ -16,8 +16,10 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 REM Pipeline attendu pour cette famille de modele. SEULE ligne qui differe
-REM entre crispz-qwen-edit (ZImage), crispz-krea (Flux) et crispz-qwen-edit (Qwen).
-set CHECK_PIPE=QwenImageImg2ImgPipeline
+REM entre crispz-studio (ZImage), crispz-krea2 (Krea2), crispz-qwen-edit (Qwen)
+REM et crispz-klein (FLUX.2). L'inpaint est le bon marqueur ici: c'est lui qui
+REM sert AUSSI d'img2img (masque blanc plein), cf. FORK.md.
+set CHECK_PIPE=Flux2KleinInpaintPipeline
 
 REM --- flags ---
 set USE_VENV=1
