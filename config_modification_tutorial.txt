@@ -1,4 +1,4 @@
-crispz-studio - config tutorial
+crispz-klein - config tutorial
 ================================
 
 HOW IT WORKS
@@ -32,11 +32,11 @@ ollama_vision_blocklist List of model-name substrings to EXCLUDE from the vision
                         them as vision-capable. e.g. ["qwen3.6"] to hide a model
                         that claims vision but doesn't work well.
 ollama_cpu              true -> run the Ollama vision/LLM on CPU (num_gpu=0): zero
-                        VRAM shared with Z-Image (slower captions). Good if your GPU
+                        VRAM shared with the model (slower captions). Good if your GPU
                         is tight when using Describe / Vision Mix during generation.
 ollama_keep_alive       How long Ollama keeps the model in VRAM after a call.
                         0 (default) = unload immediately so the VRAM is freed
-                        before Z-Image generates (avoids GPU competition on one
+                        before the model generates (avoids GPU competition on one
                         card). Use "30s"/"5m" or -1 (keep) if you have VRAM to
                         spare and want faster repeated Describe/Vision Mix.
 
@@ -56,13 +56,15 @@ model_profiles          Per-model auto-tuning: a substring of the model name ->
 default_model_profile   {steps, guidance} used when no model_profiles key matches.
 default_width/height    txt2img size (multiples of 16).
 default_gen_steps       txt2img steps.
-default_guidance        CFG. 0 = Z-Image Turbo. Z-Image Base: ~3.5-5.
+default_guidance        CFG. INERT on FLUX.2 Klein: the model is step-wise distilled,
+                        diffusers ignores guidance_scale and the pipelines expose no
+                        negative_prompt. Kept at 1.0 so the UI does not suggest a CFG.
 default_sampler         Sampler par defaut: euler (natif flow-matching), unipc (UniPC
                         multistep), ou lcm (LCM flow-matching: peu de steps, guidance
-                        ~0-1 -> modeles distilles/Turbo). Z-Image impose des sigmas
+                        ~0-1 -> modeles distilles). FLUX.2 Klein impose des sigmas
                         custom -> DPM++ 2M / DPM2a / dpmpp_sde incompatibles (non
                         exposes). Choix aussi dans l'UI (a cote du CFG).
-default_schedule        Schedule de sigmas (facon ComfyUI): sgm_uniform (natif Z-Image),
+default_schedule        Schedule de sigmas (facon ComfyUI): sgm_uniform (natif flow-matching),
                         beta, karras, exponential. 'simple' est accepte comme alias de
                         sgm_uniform: c'est la MEME courbe (les sigmas passes par le
                         pipeline sont linspace(1, 1/steps, steps), ce que ComfyUI nomme
@@ -78,9 +80,9 @@ default_refine          Default state of the "Refine (img2img)" checkbox (true/f
                         false = ESRGAN upscale only by default (skip the slow refine).
 default_refine_first    Default state of "Refine before upscale (faster)" (true/false).
                         true = refine at native res THEN ESRGAN (~4-16x faster refine).
-default_refine_steps    Z-Image refine steps.
+default_refine_steps    Refine steps (klein: 4).
 default_tile/overlap    ESRGAN tiling (0 = off) to cap VRAM.
-default_refine_tile/overlap   Z-Image diffusion tiling for 4K+ (0 = whole image).
+default_refine_tile/overlap   Diffusion tiling for 4K+ (0 = whole image).
 attention_slice_above   Cote (px) au-dela duquel on active l'attention slicing (whole-image
                         2K+ -> evite le spill VRAM). En-dessous (tuiles 1024, txt2img) le
                         slicing est OFF = attention SDPA rapide. 1664 par defaut. Sur grosse
@@ -114,7 +116,7 @@ refine_tile_prompt      Prompt utilise PAR TUILE pour le refine tuile. Le prompt
                         reintroduire de duplication.
 default_cpu_offload     "none" | "model" (~half VRAM) | "sequential" (~9GB, slower).
 
-checkpoints_dir         Folder of single-file Z-Image models (.safetensors). Scanned
+checkpoints_dir         Folder of single-file FLUX.2 models (.safetensors). Scanned
                         into the Models > Checkpoints dropdown to switch model (like
                         ESRGAN). Empty -> ./checkpoints next to app.py.
 loras_dir               Folder of LoRA .safetensors. Scanned into Models > LoRA.
@@ -133,28 +135,11 @@ lora_weight_max         NEGATIVE weights are allowed and useful: the LoRA then p
                         negatives. Bad values or min >= max -> falls back to -2..2.
 lora_slots              Number of LoRA slots shown in Models > LoRA (1..10, default 3).
                         Each slot = a dropdown + weight; all combine at generation.
-zimage_omni_model       HF repo id OR local diffusers folder of a Z-Image Omni/Edit
-                        model (with a SigLIP encoder). REQUIRED for the Reference
-                        (Omni) multi-image mode. The Turbo/Base text-to-image models
-                        cannot do Omni (no SigLIP).
-                        NOTE: as of now Tongyi has released only Z-Image-Turbo and
-                        Z-Image-Base. 'Z-Image-Omni-Base' and 'Z-Image-Edit' are still
-                        "coming soon". Leave this empty until they ship, then set it
-                        (likely "Tongyi-MAI/Z-Image-Omni-Base" or "Tongyi-MAI/Z-Image-Edit").
-face_detailer           false (default). true -> '🔧 Detail faces' checked at startup:
-                        after each render (and upscale), faces are detected (insightface)
-                        and each one is re-refined at high resolution (ADetailer-style):
-                        enlarged crop -> Z-Image img2img -> feathered elliptical paste.
-face_detailer_denoise   Strength of the per-face refine (0.1-0.7, default 0.35). Also a
-                        live slider in Advanced > Generation. Higher = sharper but starts
-                        changing the identity.
-face_detailer_max_faces Max faces per image (default 4, biggest first).
-faceswap_model_path     Absolute path to an inswapper .onnx file (Face Swap tab). If
-                        empty, the app also looks for inswapper_128.onnx in the
-                        'faceswap' folder (next to app.py), 'models', checkpoints_dir,
-                        and ~/.insightface/models. Needs: pip install insightface onnxruntime-gpu.
-faceswap_model_url      Optional URL to auto-download inswapper_128.onnx once (into the
-                        'faceswap' folder) if the model is not found locally.
+zimage_omni_model       REMOVED on crispz-klein. There is no separate edit model:
+zimage_omni_base        Flux2KleinPipeline takes a list of reference images, so the
+                        Reference (Omni) tab and the protocol op 'edit' run on the
+                        BASE model. Changing the checkpoint changes the editor too.
+                        Do not re-add these keys when merging from the upstream forks.
 
 --- Face Swap: blending quality (UI: Face Swap > Blending quality) ---
 Background: inswapper outputs a 128px face and insightface pastes it through a plain
@@ -262,7 +247,7 @@ caption_model           Local auto-describe model (no Ollama): "blip-large"
 improve_local_keywords  Quality tags appended by "Improve prompt" when no Ollama
                         model is selected (local rule-based fallback).
 checkpoints_extra_dir   Optional second checkpoints folder, merged into the single
-                        "Z-Image checkpoint" dropdown ("" = disabled).
+                        "Klein checkpoint" dropdown ("" = disabled).
 
 job_queue               {"enabled": true}
                         Job queue panel: "+ Queue" snapshots ALL current settings

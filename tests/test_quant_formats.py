@@ -237,61 +237,67 @@ def _gguf(name, arch, *tensor_names):
     return p
 
 
-# Signature complete d'un transformer Qwen-Image (les 3 cles + un bloc).
-_QWEN_SIG = ("img_in.weight", "txt_in.weight", "txt_norm.weight",
-             "transformer_blocks.0.attn.to_q.weight")
+# Signature complete d'un transformer FLUX.2 (les 3 cles positives + un bloc).
+# Nom de constante garde pour limiter la surface de conflit au merge amont.
+_QWEN_SIG = ("x_embedder.weight", "context_embedder.weight",
+             "double_stream_modulation_img.linear.weight",
+             "single_transformer_blocks.0.attn.to_q.weight")
 
 
 def test_gguf_arch_and_layout():
-    ok = _gguf("qwen.gguf", "qwen_image", "transformer_blocks.0.attn.to_q.weight")
-    assert cz_pipeline._gguf_arch(ok) == "qwen_image"
+    ok = _gguf("klein.gguf", "flux2", *_QWEN_SIG)
+    assert cz_pipeline._gguf_arch(ok) == "flux2"
+    assert cz_pipeline._gguf_layout(ok) == "flux2"
     assert cz_pipeline._gguf_layout_unsupported(ok) is None
-    flux = _gguf("flux.gguf", "flux", "double_blocks.0.img_attn.qkv.weight")
-    assert cz_pipeline._gguf_arch(flux) == "flux"
-    sdcpp = _gguf("sdcpp.gguf", "qwen_image", "blocks.0.attn.wq.weight")
+    # FLUX.1 au layout city96: noms de tenseurs completement differents -> foreign
+    f1 = _gguf("flux1.gguf", "flux", "double_blocks.0.img_attn.qkv.weight")
+    assert cz_pipeline._gguf_arch(f1) == "flux"
+    assert cz_pipeline._gguf_layout(f1) == "foreign"
+    sdcpp = _gguf("sdcpp.gguf", "flux2", "blocks.0.attn.wq.weight")
     assert cz_pipeline._gguf_layout_unsupported(sdcpp) is not None
 
 
 def test_gguf_layout_beats_a_mislabelled_architecture():
     """Des outils de conversion tamponnent 'general.architecture' n'importe comment:
-    hyphoria_qwen_v1 (HF chapel/hyphoria_qwen_v1.0) publie des Qwen-Image declarees
-    'wan'. Les NOMS DE TENSEURS sont une preuve, l'etiquette KV non -> le layout prime,
-    sinon on ecarte 17 Go de modele parfaitement chargeable."""
+    des Qwen-Image ont ete publiees declarees 'wan'. Les NOMS DE TENSEURS sont une
+    preuve, l'etiquette KV non -> le layout prime, sinon on ecarte un modele
+    parfaitement chargeable."""
     p = _gguf("mislabelled.gguf", "wan", *_QWEN_SIG)
     assert cz_pipeline._gguf_arch(p) == "wan"
-    assert cz_pipeline._gguf_layout(p) == "qwen"
+    assert cz_pipeline._gguf_layout(p) == "flux2"
     assert cz_pipeline._gguf_layout_unsupported(p) is None
 
 
 def test_gguf_foreign_layout_still_rejected():
     """Le layout reste le vrai garde-fou: un schema sd.cpp est refuse meme s'il
     declare la bonne architecture."""
-    p = _gguf("sdcpp2.gguf", "qwen_image", "blocks.0.attn.wq.weight", "txtmlp.weight")
+    p = _gguf("sdcpp2.gguf", "flux2", "blocks.0.attn.wq.weight", "txtmlp.weight")
     assert cz_pipeline._gguf_layout(p) == "foreign"
     assert cz_pipeline._gguf_layout_unsupported(p) is not None
 
 
-def test_gguf_flux_diffusers_layout_is_not_mistaken_for_qwen():
-    """FLUX au layout diffusers partage 'transformer_blocks.', 'time_text_embed',
-    'norm_out' et 'proj_out' avec Qwen-Image: ces prefixes ne suffisent donc PAS a
-    conclure. Sans img_in/txt_in/txt_norm -> layout indetermine, l'archi declaree
-    tranche et le fichier est ecarte."""
-    p = _gguf("fluxlike.gguf", "flux", "transformer_blocks.0.attn.to_q.weight",
-              "x_embedder.weight", "context_embedder.weight", "norm_out.linear.weight")
+def test_gguf_qwen_diffusers_layout_is_not_mistaken_for_flux2():
+    """Qwen-Image au layout diffusers partage 'transformer_blocks.', 'norm_out' et
+    'proj_out' avec FLUX.2: ces prefixes ne suffisent donc PAS a conclure. Sans la
+    signature FLUX.2 (x_embedder + context_embedder + double_stream_modulation) ->
+    layout indetermine, l'archi declaree tranche et le fichier est ecarte."""
+    p = _gguf("qwenlike.gguf", "qwen_image", "transformer_blocks.0.attn.to_q.weight",
+              "img_in.weight", "txt_in.weight", "norm_out.linear.weight")
     assert cz_pipeline._gguf_layout(p) == "unknown"
     assert cz_pipeline._gguf_layout_unsupported(p) is None      # pas 'foreign'
-    assert cz_pipeline._gguf_arch(p) == "flux"                  # -> ecarte par l'archi
+    assert cz_pipeline._gguf_arch(p) == "qwen_image"            # -> ecarte par l'archi
 
 
 def test_list_checkpoints_accepts_the_mislabelled_gguf():
-    """Bout en bout: le dropdown doit proposer la GGUF mal etiquetee et refuser la
-    FLUX, dans un dossier de checkpoints dedie."""
+    """Bout en bout: le dropdown doit proposer la GGUF FLUX.2 mal etiquetee et refuser
+    la Qwen-Image, dans un dossier de checkpoints dedie."""
     import tempfile
     d = tempfile.mkdtemp(prefix="cz_ckpt_")
     for src, dst in ((_gguf("ck_ok.gguf", "wan", *_QWEN_SIG), "hyphoria_like.gguf"),
-                     (_gguf("ck_flux.gguf", "flux", "transformer_blocks.0.attn.to_q.weight",
-                            "x_embedder.weight"), "flux_like.gguf"),
-                     (_gguf("ck_sd.gguf", "qwen_image", "blocks.0.attn.wq.weight"),
+                     (_gguf("ck_qwen.gguf", "qwen_image",
+                            "transformer_blocks.0.attn.to_q.weight",
+                            "img_in.weight"), "qwen_like.gguf"),
+                     (_gguf("ck_sd.gguf", "flux2", "blocks.0.attn.wq.weight"),
                       "sdcpp_like.gguf")):
         import shutil
         shutil.copy(src, os.path.join(d, dst))
@@ -344,7 +350,7 @@ if __name__ == "__main__":
                test_gguf_arch_and_layout,
                test_gguf_layout_beats_a_mislabelled_architecture,
                test_gguf_foreign_layout_still_rejected,
-               test_gguf_flux_diffusers_layout_is_not_mistaken_for_qwen,
+               test_gguf_qwen_diffusers_layout_is_not_mistaken_for_flux2,
                test_list_checkpoints_accepts_the_mislabelled_gguf,
                test_int8_convrot_declared_in_header_metadata):
         fn()

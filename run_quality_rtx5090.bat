@@ -1,8 +1,8 @@
 @echo off
-title crispz-qwen-edit - RTX 5090 (local)
+title crispz-klein - RTX 5090 (local)
 cd /d "%~dp0"
 echo ============================================
-echo  crispz-qwen-edit - RTX 5090 (local 127.0.0.1)
+echo  crispz-klein - RTX 5090 (local 127.0.0.1)
 echo ============================================
 echo.
 REM Optimisations CUDA (sans danger, BF16)
@@ -14,17 +14,16 @@ set GRADIO_SERVER_PORT=7860
 REM Console UTF-8 (evite les crashs cp1252 sur les barres de progression HF)
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
-REM === LOCAL-ONLY: utilise UNIQUEMENT le cache HF, ne RE-telecharge jamais Qwen-Image. ===
-REM Qwen/Qwen-Image est deja en cache (46 Go) -> charge en local, 0 telechargement.
-REM Effet de bord: l'onglet Edit (Qwen-Image-Edit-2509, non cache) affichera une erreur
-REM au lieu d'aspirer ~20 Go. Mets cette ligne en commentaire (REM) pour autoriser les
-REM telechargements une fois (puis remets-la).
+REM === LOCAL-ONLY: utilise UNIQUEMENT le cache HF, ne RE-telecharge jamais le modele.
+REM black-forest-labs/FLUX.2-klein-4B fait ~15 Go et se met en cache au 1er lancement.
+REM Mets cette ligne en commentaire (REM) pour autoriser un telechargement (nouveau
+REM checkpoint, nouveau LoRA), puis remets-la. ===
 set HF_HUB_OFFLINE=1
-REM === VRAM (RTX 5090, 32 Go). Cet env force l'offload quel que soit le reglage UI/config.
-REM   - Avec un transformer GGUF quantifie (ex. qwen-image-Q4_K_M.gguf, ~12 Go): 'model'
-REM     tient large ET reste rapide (~1 s/step). Recommande (defaut ci-dessous).
-REM   - Avec Qwen-Image bf16 COMPLET (~44 Go, sans GGUF): 'model' OOM -> mets 'sequential'
-REM     (couche par couche, tient mais lent). ===
-set CZ_OFFLOAD=model
+REM === VRAM (RTX 5090, 32 Go). klein-4B tient ENTIER en VRAM: ~15 Go pour toute la
+REM surface (txt2img + edit + inpaint + img2img partagent le meme modele charge).
+REM L'offload n'est donc PAS necessaire ici, contrairement aux forks 20B.
+REM   - >= 16 Go de VRAM: laisser 'none' (defaut ci-dessous), c'est le plus rapide.
+REM   - < 16 Go: mettre 'model' (decharge par sous-module, plus lent mais tient). ===
+set CZ_OFFLOAD=none
 REM Delegue au run.bat (detection venv + ESRGAN_DIR + lancement)
 call "%~dp0run.bat" %*

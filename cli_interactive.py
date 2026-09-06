@@ -90,7 +90,7 @@ def main():
     # 1) Chemins / modeles
     esrgan_dir = ask("Dossier ESRGAN", prefs.get("esrgan_dir") or app.ESRGAN_DIR, str)
     app.set_esrgan_dir(esrgan_dir)
-    zimage_model = ask("Modele Z-Image (repo HF ou chemin local)",
+    zimage_model = ask("Modele FLUX.2 Klein (repo HF ou chemin local)",
                        prefs.get("zimage_model") or app.BASE_REPO, str)
     app.set_zimage_model(zimage_model)
 
@@ -100,7 +100,7 @@ def main():
         return 1
 
     print(f"\nESRGAN_DIR: {app.ESRGAN_DIR}")
-    print(f"Z-Image   : {app.BASE_REPO}")
+    print(f"Klein     : {app.BASE_REPO}")
     print(f"Modeles ESRGAN disponibles: {len(models)}\n")
 
     # 2) Source : fichier ou dossier

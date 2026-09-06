@@ -1,5 +1,5 @@
 @echo off
-REM Boot check generique crispz-qwen-edit (remplace les anciens scripts rtx5090).
+REM Boot check generique crispz-klein (remplace les anciens scripts rtx5090).
 REM
 REM Diagnostique la machine AVANT de lancer l'app, quelle que soit la carte
 REM (RTX 50xx / 40xx / 30xx / 20xx...), et s'arrete net si la configuration ne
@@ -18,7 +18,7 @@ REM ATTENTION --lan / --web: l'app n'a AUCUNE authentification et sert le dossie
 REM de sortie + les dossiers de modeles. Voir "Scope" dans SECURITY.md.
 
 setlocal enabledelayedexpansion
-title crispz-qwen-edit - Boot Check
+title crispz-klein - Boot Check
 cd /d "%~dp0"
 
 set "NORUN=0"
@@ -40,7 +40,7 @@ goto argloop
 :argdone
 
 echo ====================================================
-echo    crispz-qwen-edit - Boot Check
+echo    crispz-klein - Boot Check
 echo ====================================================
 echo.
 
@@ -118,7 +118,7 @@ set "CF_PORT=7860"
 if defined EXPOSE (
     echo ----------------------------------------------------
     echo  [SECURITE] Exposition reseau demandee ^(--!EXPOSE!^).
-    echo  crispz-qwen-edit n'a AUCUNE authentification et sert ton dossier de
+    echo  crispz-klein n'a AUCUNE authentification et sert ton dossier de
     echo  sortie ainsi que tes dossiers de modeles. N'expose que sur un reseau
     echo  de confiance. Voir la section "Scope" de SECURITY.md.
     echo ----------------------------------------------------
@@ -158,7 +158,7 @@ if "!NORUN!"=="1" (
     endlocal & exit /b 0
 )
 echo ====================================================
-echo    Checks OK. Lancement de crispz-qwen-edit...
+echo    Checks OK. Lancement de crispz-klein...
 echo ====================================================
 timeout /t 2 /nobreak >nul
 call "%~dp0run.bat" %PASSTHRU%

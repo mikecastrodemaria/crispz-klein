@@ -3,10 +3,21 @@
 Extrait de app.py. Appelle l'API HTTP locale d'Ollama (/api/tags, /api/show,
 /api/generate). Ne depend que de cz_core (config, log, b64). Les handlers d'UI
 (_ui_describe...) restent dans app.py (couche Gradio) et appellent ces fonctions.
+
+RAISONNEMENT DESACTIVE. Les modeles "thinking" (Qwen3, DeepSeek-R1, Kimi...)
+emettent leur monologue interne, qui finissait *dans le prompt d'image*. Deux
+defenses, parce qu'aucune ne suffit seule:
+  1. `think: false` dans le payload /api/generate (Ollama >= 0.9). Un modele qui
+     ne connait pas le champ repond 400 -> `_ollama_http` rejoue SANS le champ.
+  2. `_strip_thinking()` sur chaque reponse: certains modeles emettent quand meme
+     des balises <think>...</think> dans `response` (template Modelfile, vieux
+     Ollama), et l'API peut renvoyer un champ `thinking` separe qu'on ignore.
 """
 
 import os
+import re
 import json
+import urllib.error
 import urllib.request
 
 import cz_core
@@ -19,15 +30,45 @@ from cz_core import (
 OLLAMA_URL = (os.environ.get("OLLAMA_URL") or _prefs.get("ollama_url")
               or CONFIG.get("ollama_url") or "http://localhost:11434")
 # Duree de maintien du modele Ollama en VRAM apres un appel (keep_alive). 0 =
-# decharge immediatement -> libere la VRAM avant la generation Z-Image.
+# decharge immediatement -> libere la VRAM avant la generation d'image.
 OLLAMA_KEEP_ALIVE = CONFIG.get("ollama_keep_alive", 0)
-# Force Ollama sur CPU (num_gpu=0) -> 0 VRAM partagee avec Z-Image (plus lent).
+# Force Ollama sur CPU (num_gpu=0) -> 0 VRAM partagee avec le modele (plus lent).
 OLLAMA_CPU = bool(CONFIG.get("ollama_cpu", False))
 
 
+# Balises de raisonnement des modeles "thinking". Non-greedy, insensible a la casse,
+# DOTALL: un bloc peut faire des dizaines de lignes.
+_THINK_RE = re.compile(r"<\s*(think|thinking|reasoning)\s*>.*?<\s*/\s*\1\s*>",
+                       re.IGNORECASE | re.DOTALL)
+# Bloc ouvert jamais referme (troncature, stop token manque): on coupe jusqu'a la fin
+# de l'ouverture et on garde ce qui suit.
+_THINK_OPEN_RE = re.compile(r"^\s*<\s*(think|thinking|reasoning)\s*>", re.IGNORECASE)
+
+
+def _strip_thinking(text):
+    """Retire le monologue interne d'un modele de raisonnement.
+
+    Sans ca, un prompt d'image se retrouve prefixe de "Okay, the user wants...".
+    Gere le bloc ferme, le bloc ouvert non ferme, et une balise fermante orpheline
+    (le modele a commence a penser avant le premier token capture)."""
+    t = text or ""
+    t = _THINK_RE.sub("", t)
+    if _THINK_OPEN_RE.match(t):
+        # ouverture sans fermeture -> il ne reste que du raisonnement
+        return ""
+    # fermeture orpheline: tout ce qui precede est du raisonnement
+    m = re.search(r"<\s*/\s*(think|thinking|reasoning)\s*>", t, re.IGNORECASE)
+    if m:
+        t = t[m.end():]
+    return t.strip()
+
+
 def _ollama_gen_opts():
-    """Options communes pour /api/generate (keep_alive + CPU optionnel)."""
-    p = {"stream": False, "keep_alive": OLLAMA_KEEP_ALIVE}
+    """Options communes pour /api/generate (keep_alive + CPU optionnel).
+
+    `think: false` coupe le raisonnement des modeles qui le supportent. Les autres
+    renvoient 400 -> _ollama_http rejoue sans le champ (cf. docstring du module)."""
+    p = {"stream": False, "keep_alive": OLLAMA_KEEP_ALIVE, "think": False}
     if OLLAMA_CPU:
         p["options"] = {"num_gpu": 0}
     return p
@@ -35,11 +76,24 @@ def _ollama_gen_opts():
 
 def _ollama_http(path, payload=None, base=None, timeout=8):
     b = (base or OLLAMA_URL).rstrip("/")
-    data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(b + path, data=data,
-                                 headers={"Content-Type": "application/json"} if data else {})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+
+    def _call(pl):
+        data = json.dumps(pl).encode() if pl is not None else None
+        req = urllib.request.Request(b + path, data=data,
+                                     headers={"Content-Type": "application/json"} if data else {})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode())
+
+    try:
+        return _call(payload)
+    except urllib.error.HTTPError as e:
+        # Un modele sans support du raisonnement refuse `think` (400 "does not
+        # support thinking"). On rejoue sans, plutot que de casser l'appel.
+        if e.code == 400 and isinstance(payload, dict) and "think" in payload:
+            _dbg("ollama: 'think' refuse par le modele -> retry sans")
+            pl = {k: v for k, v in payload.items() if k != "think"}
+            return _call(pl)
+        raise
 
 
 def _ollama_vision_models(base=None):
@@ -80,7 +134,7 @@ def _ollama_describe(image, model, base=None):
     out = _ollama_http("/api/generate",
                        {"model": model, "prompt": DESCRIBE_INSTRUCTION, "images": [b64],
                         **_ollama_gen_opts()}, base=base, timeout=180)
-    return (out.get("response") or "").strip()
+    return _strip_thinking(out.get("response"))
 
 
 def _ollama_improve(prompt_text, model, base=None):
@@ -91,7 +145,7 @@ def _ollama_improve(prompt_text, model, base=None):
              else f"{IMPROVE_INSTRUCTION}\n\nPROMPT: {pt}")
     out = _ollama_http("/api/generate", {"model": model, "prompt": instr, **_ollama_gen_opts()},
                        base=base, timeout=120)
-    return (out.get("response") or "").strip()
+    return _strip_thinking(out.get("response"))
 
 
 _IMPROVE_LOCAL_KEYWORDS = CONFIG.get(
@@ -121,4 +175,4 @@ def _ollama_compose(captions, model, base=None):
              else f"{COMPOSE_INSTRUCTION}\n\n{listing}")
     out = _ollama_http("/api/generate", {"model": model, "prompt": instr, **_ollama_gen_opts()},
                        base=base, timeout=120)
-    return (out.get("response") or "").strip()
+    return _strip_thinking(out.get("response"))

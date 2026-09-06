@@ -42,7 +42,7 @@ def offload_reco(vram_gb):
     (mesure ~3 s/step contre ~1,1 s/step en 'model'), a reserver aux petites cartes.
     """
     if vram_gb >= 30:
-        return ("none", "les modeles compacts (GGUF Q8, Z-Image) tiennent entiers. "
+        return ("none", "les modeles compacts (GGUF Q8, FLUX.2 Klein 4B) tiennent entiers. "
                         "Pour un gros modele bf16 (~33 Go), passer a 'model'.")
     if vram_gb >= 20:
         return ("model", "un transformer entier tient sur le GPU; l'encodeur texte "

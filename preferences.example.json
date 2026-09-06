@@ -1,9 +1,9 @@
 {
   "esrgan_dir": "./upscale_models",
-  "zimage_model": "Tongyi-MAI/Z-Image-Turbo",
+  "zimage_model": "black-forest-labs/FLUX.2-klein-4B",
   "model": "4x-ClearRealityV1_Soft.safetensors",
   "factor": 2.0,
-  "denoise": 0.30,
+  "denoise": 0.3,
   "steps": 12,
   "prompt": "",
   "seed": -1,

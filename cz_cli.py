@@ -450,10 +450,10 @@ def cli_main(argv=None):
                         help="Protect the Gradio UI with a login page. Several accounts: "
                              "\"a:pw1,b:pw2\". Also via config.txt 'auth' or env CRISPZ_AUTH. "
                              "Strongly recommended when exposing over LAN or a tunnel.")
-    # Chemins config / Z-Image
+    # Chemins config / modele
     parser.add_argument("--esrgan-dir", help="Override ESRGAN_DIR for this run")
     parser.add_argument("--zimage-model",
-                        help="Override Z-Image: HF repo, diffusers folder, OR a single-file "
+                        help="Override the model: HF repo, diffusers folder, OR a single-file "
                              ".safetensors (Civitai) used as the transformer (VAE+encoder from base).")
     parser.add_argument("--zimage-transformer",
                         help="Single-file .safetensors transformer override (Civitai), keeping "

@@ -12,13 +12,13 @@ import cz_pipeline  # noqa: E402
 
 def test_fmt_load_downloading():
     # VRAM ~ 0 -> phase download/lecture disque (premier run seulement)
-    s = cz_pipeline._fmt_load("Z-Image base", 12.0, 0.0)
+    s = cz_pipeline._fmt_load("FLUX.2 Klein base", 12.0, 0.0)
     assert "12s" in s and "downloading" in s.lower()
 
 
 def test_fmt_load_in_vram():
     # VRAM > seuil -> affiche GB charges
-    s = cz_pipeline._fmt_load("Z-Image base", 45.0, 3.2)
+    s = cz_pipeline._fmt_load("FLUX.2 Klein base", 45.0, 3.2)
     assert "45s" in s and "3.2 GB" in s
 
 
