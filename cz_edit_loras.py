@@ -1,4 +1,4 @@
-"""Registre des LoRA d'EDITION. VIDE chez crispz-klein.
+"""Registre des LoRA d'EDITION FLUX.2 Klein.
 
 Le catalogue de l'amont (crispz-qwen-edit) liste des LoRA entrainees pour
 Qwen-Image-Edit 2509/2511. Elles sont INCOMPATIBLES avec FLUX.2 Klein:
@@ -7,9 +7,9 @@ erreur, au pire des poids incoherents. Les annoncer dans `caps.edit_loras`
 reviendrait a promettre une capacite qui casse -- exactement ce que la regle
 maison interdit (degradation annoncee, jamais silencieuse).
 
-`EDIT_LORA_SPECS` est donc vide et le catalogue amont est conserve juste en
-dessous, commente, comme reference de merge: quand des LoRA d'edition FLUX.2
-Klein existeront, elles se declarent ici, au meme format.
+`EDIT_LORA_SPECS` ne contient donc QUE des LoRA verifiees chargeables sur
+FLUX.2 Klein; le catalogue amont est conserve juste en dessous, commente, comme
+reference de merge. `tools/check_klein_extras.py` guette les nouvelles sorties.
 
 Toute la mecanique (telechargement paresseux, resolution de chemin, index
 local, overrides config) est INCHANGEE et fonctionne des qu'une entree est
@@ -29,10 +29,27 @@ from cz_core import CONFIG, _log, _dbg
 
 # Ordre = ordre du dropdown. inputs = nombre d'images attendu (2 = input + reference).
 # Ordre = ordre du dropdown. inputs = nombre d'images attendu (2 = input + reference).
-# VIDE: aucune LoRA d'edition FLUX.2 Klein publiee a ce jour (2026-09-05).
-EDIT_LORA_SPECS = {}
+EDIT_LORA_SPECS = {
+    "Consistence-Edit": {
+        # Auteur: xiaozhijason / lrzjason (le meme que Anything2Real du catalogue amont).
+        # Apache-2.0, rang 128, 200 tenseurs bf16 (~368 Mo), cible FLUX.2-klein-4B.
+        # Origine CivitAI: models/1939453 version 2771678 "Flux2 Klein 4B 20260314".
+        # NB: le fichier MELANGE deux dialectes de cles (160 PEFT + 40 lora.down/up).
+        # cz_pipeline._load_lora_normalized les ramene au dialecte PEFT avant chargement,
+        # sinon peft n'en applique qu'une partie EN SILENCE (cf. FORK.md).
+        "repo": "lrzjason/Consistance_Edit_Lora",
+        "weights": "f2k_4B_consist_20260314.safetensors",
+        "adapter_name": "consistence-edit",
+        "prompt": ("Add realistic details to the image. Restore high frequency details "
+                   "from the corrupted image."),
+        "inputs": 1, "base": "klein-4B",
+        "weight": 0.6,          # l'auteur conseille 0.5-0.7
+        "local_names": ["f2k_4B_consist_20260314.safetensors",
+                        "consistence_edit_flux2_klein_4b.safetensors"]},
+}
 
 # --- Catalogue Qwen-Image-Edit de l'amont, conserve comme REFERENCE DE MERGE.
+# --- (aucune de ces entrees ne charge sur FLUX.2: architecture et cles differentes)
 # --- Ne PAS le reactiver tel quel: ces poids ne chargent pas sur FLUX.2.
 # EDIT_LORA_SPECS = {
 #     "Multiple-Angles": {

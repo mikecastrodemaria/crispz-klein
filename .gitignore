@@ -80,3 +80,6 @@ tags/
 
 # --- Cache local de miniatures Asset Browser (reconstructible) ---
 cache/
+
+# Sauvegardes locales de wildcards (datees), jamais versionnees
+wildcards/_backup-*/

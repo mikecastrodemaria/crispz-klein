@@ -4,7 +4,7 @@
 > (fork of [crispz-qwen-edit](https://github.com/mikecastrodemaria/crispz-qwen-edit),
 > itself a Fooocus-style fork of
 > [crispz](https://github.com/mikecastrodemaria/crispz)).
-> Current version: **1.18.1** — see [CHANGELOG.md](CHANGELOG.md).
+> Current version: **1.18.2** — see [CHANGELOG.md](CHANGELOG.md).
 
 ![crispz-klein — FLUX.2 Klein creation + editing studio](assets/screenshot.png)
 
@@ -36,8 +36,8 @@ reference in 3.0 s. crispz-qwen-edit needs two 20B models for the same features.
 **Two things to know before using it.** klein-4B is step-wise distilled, so
 **negative prompts and the guidance slider have no effect** — verified, renders at
 guidance 1.0 / 4.0 / 8.0 are bit-identical (`tests/test_klein_guidance.py`). And the
-edit-LoRA catalogue is empty: the Qwen-Image-Edit presets of the upstream fork are
-incompatible with FLUX.2. Both are announced honestly in the CLI protocol
+edit-LoRA catalogue holds exactly one verified preset (`Consistence-Edit`): the
+Qwen-Image-Edit presets of the upstream fork are incompatible with FLUX.2. Both are announced honestly in the CLI protocol
 (`supports.negative: false`, `edit_loras: []`). Full detail in [FORK.md](FORK.md).
 
 > ⚠️ Do **not** point this at `FLUX.2-klein-9B`: non-commercial licence. This fork
@@ -281,7 +281,7 @@ Models → Omni is kept for API compatibility with the family and is a no-op.
 |---|---|
 | **ControlNet** | no FLUX.2 Klein ControlNet model published yet |
 | **IP-Adapter** (what Fooocus uses for image prompts on SDXL) | none — and unnecessary, multi-reference is native |
-| **Edit-task LoRAs** | none published for FLUX.2; the Qwen-Image-Edit presets of the upstream fork cannot load here and are not advertised |
+| **Edit-task LoRAs** | one shipped (`Consistence-Edit`, detail restoration, Apache-2.0). The Qwen-Image-Edit presets of the upstream fork cannot load here and are not advertised; `tools/check_klein_extras.py` watches for new releases |
 
 ## Job queue
 

@@ -111,18 +111,56 @@ sont donc **inchangés** — surface de conflit minimale au merge.
 `get_pipe("img2img")` et `get_pipe("inpaint")` renvoient **le même objet** (partagé
 sous les deux clefs de `_DERIVED`).
 
-### C. Le catalogue de LoRA d'édition est VIDE — *imprévu, trouvé au test*
+### C. Le catalogue de LoRA d'édition, vidé puis re-rempli — *imprévu*
 
 `cz_edit_loras.py` héritait de 19 presets Qwen-Image-Edit 2509/2511 et de 2 presets
 Lightning. Tous **incompatibles FLUX.2** (architecture et clés différentes). Le `caps`
-les annonçait : un appelant demandant `Manga-Tone` aurait planté. `EDIT_LORA_SPECS`
-et `SPEED_SPECS` sont donc vidés — **le catalogue amont est conservé juste en dessous,
-commenté, comme référence de merge**. Toute la mécanique (téléchargement paresseux,
-index local, overrides config) est intacte : une entrée FLUX.2 suffit à la réveiller.
+les annonçait : un appelant demandant `Manga-Tone` aurait planté. `EDIT_LORA_SPECS` et
+`SPEED_SPECS` ont donc été vidés — **le catalogue amont est conservé juste en dessous,
+commenté, comme référence de merge**.
 
-Conséquences dans le `caps` : `edit_loras: []`, `edit_presets: false`,
-`edit_fast: ["off"]`. `speed_names()` renvoie `[]` — klein est déjà distillé à
-4 steps, il n'y a rien à accélérer.
+Le catalogue contient depuis **une** entrée, vérifiée chargeable et testée sur GPU :
+
+| Preset | Source | Licence | Poids conseillé |
+|---|---|---|---|
+| `Consistence-Edit` | [`lrzjason/Consistance_Edit_Lora`](https://huggingface.co/lrzjason/Consistance_Edit_Lora) (`f2k_4B_consist_20260314.safetensors`) | Apache-2.0 | 0.6 (auteur : 0.5–0.7) |
+
+Rang 128, 200 tenseurs bf16 (~368 Mo), cible explicitement `FLUX.2-klein-4B`. Même
+auteur que `Anything2Real` du catalogue amont. C'est un LoRA de **restauration de
+détail** (rend du haut-fréquence en préservant la cohérence couleur/structure), pas
+d'édition créative : utile en passe de finition, pas pour le casting `@Nom`.
+
+`SPEED_SPECS` reste vide et `speed_names()` renvoie `[]` : klein est déjà distillé à
+4 steps, il n'y a rien à accélérer. `caps` : `edit_fast: ["off"]`.
+
+`tools/check_klein_extras.py` guette les prochaines sorties (ControlNet, LoRA d'édition).
+
+### C-bis. Dialecte de clés LoRA — *imprévu, trouvé en intégrant ce preset*
+
+diffusers/peft attend `.lora_A.weight` / `.lora_B.weight`. Ce LoRA-là **mélange deux
+dialectes** : 160 clés PEFT plus 40 en `.lora.down.weight` / `.lora.up.weight` (les
+5 premiers blocs double-stream). peft charge ce qu'il reconnaît et **crée un adaptateur
+neuf pour le reste** : le LoRA s'applique partiellement, sans erreur, juste un
+`RuntimeWarning` noyé dans la sortie.
+
+`_lora_needs_normalizing()` détecte le cas à l'en-tête et `_load_lora_normalized()`
+ramène les clés au dialecte PEFT avant chargement (`down` → `A`, `up` → `B`, rangs
+identiques), en le journalisant. Vaut aussi pour `.lora_down.` / `.lora_up.`.
+
+### C-ter. Collision d'espace de noms base ↔ édition — *imprévu, conséquence du § H*
+
+Chez l'amont, édition et base sont deux modèles distincts, donc deux jeux
+d'adaptateurs indépendants. Ici c'est le **même objet** : les deux jeux se disputaient
+`cz_lora_i` (« Adapter name cz_lora_0 already in use ») dès qu'un LoRA de base **et**
+un preset d'édition étaient posés — plantage franc, aucune image. Et `set_adapters`
+remplaçant la liste active, poser l'édition **désactivait silencieusement** les LoRA
+de base.
+
+`_apply_edit_loras` synchronise donc l'**union** (base + édition, dédoublonnée par
+chemin, premier poids gagnant) en un seul appel, avec `_APPLIED_LORAS` comme unique
+état de vérité. `_APPLIED_EDIT_LORAS` reste le sous-ensemble édition (contrat `cz_ui`).
+
+Couvert par `tests/test_lora_dialect.py`.
 
 ### D. `_QWEN_KEY_MARKERS` re-dérivé — *imprévu*
 

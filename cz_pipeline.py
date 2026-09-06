@@ -1624,6 +1624,47 @@ def _clear_loras(pipe):
         _dbg(f"delete_adapters: {e}")
 
 
+# Dialectes de cles LoRA. PEFT (ce que diffusers attend) nomme les deux matrices
+# `.lora_A.weight` / `.lora_B.weight`. D'autres outils ecrivent `.lora.down.weight` /
+# `.lora.up.weight` (ou `.lora_down.` / `.lora_up.`) -- meme mathematique, meme rang,
+# down == A et up == B. Un fichier qui MELANGE les deux (vu sur
+# lrzjason/Consistance_Edit_Lora: 160 cles PEFT + 40 cles down/up) se charge quand
+# meme, mais peft n'injecte QUE ce qu'il reconnait: les autres modules recoivent un
+# adaptateur neuf (B a zero) et le LoRA s'applique PARTIELLEMENT, sans erreur.
+# On renomme donc avant de charger, et on le journalise.
+_LORA_ALT_SUFFIXES = ((".lora.down.weight", ".lora_A.weight"),
+                      (".lora.up.weight", ".lora_B.weight"),
+                      (".lora_down.weight", ".lora_A.weight"),
+                      (".lora_up.weight", ".lora_B.weight"))
+
+
+def _lora_needs_normalizing(path):
+    """Le fichier contient-il des cles d'un dialecte non-PEFT ? Lecture d'en-tete seule."""
+    try:
+        h = _safetensors_header(path)
+    except Exception:
+        return False
+    return any(k.endswith(alt) for k in h if k != "__metadata__"
+               for alt, _ in _LORA_ALT_SUFFIXES)
+
+
+def _load_lora_normalized(path):
+    """State dict d'un LoRA avec les cles ramenees au dialecte PEFT. Renvoie
+    (state_dict, n_renommees)."""
+    from safetensors.torch import load_file
+    sd = load_file(path)
+    out, n = {}, 0
+    for k, v in sd.items():
+        nk = k
+        for alt, peft in _LORA_ALT_SUFFIXES:
+            if k.endswith(alt):
+                nk = k[: -len(alt)] + peft
+                n += 1
+                break
+        out[nk] = v
+    return out, n
+
+
 def _sync_adapters(pipe, wanted, applied, force=False, tag="LoRA"):
     """Synchronise les adaptateurs PEFT d'un pipe avec le jeu `wanted`, SANS recharger
     le modele. `applied` = jeu reellement pose sur ce pipe (liste de (chemin, poids)).
@@ -1661,8 +1702,18 @@ def _sync_adapters(pipe, wanted, applied, force=False, tag="LoRA"):
                 import warnings
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", message=".*Already found a `peft_config`.*")
-                    pipe.load_lora_weights(os.path.dirname(p) or ".",
-                                           weight_name=os.path.basename(p), adapter_name=an)
+                    if _lora_needs_normalizing(p):
+                        sd, nrn = _load_lora_normalized(p)
+                        _log(f"{tag}: {nrn} key(s) converted from lora.down/up to the "
+                             f"PEFT dialect (otherwise peft would apply this LoRA only "
+                             f"partially, silently)")
+                        pipe.load_lora_weights(sd, adapter_name=an)
+                    else:
+                        # Passer le dossier + weight_name (et non le chemin complet) : sinon
+                        # diffusers en mode offline (HF_HUB_OFFLINE) refuse "must specify a
+                        # weight_name". Marche aussi online et avec un fichier local direct.
+                        pipe.load_lora_weights(os.path.dirname(p) or ".",
+                                               weight_name=os.path.basename(p), adapter_name=an)
                 names.append(an)
                 weights.append(float(w))
             else:
@@ -1688,20 +1739,40 @@ def _apply_loras(pipe, force=False):
 
 
 def _apply_edit_loras(pipe):
-    """LoRA d'EDITION: synchronise le pipe omni avec EDIT_LORAS (ou [] si la case
+    """LoRA d'EDITION: synchronise le pipe d'edition avec EDIT_LORAS (ou [] si la case
     'Edit LoRAs' est decochee). Un echec est une erreur franche: l'utilisateur a
-    demande ce preset, une edition SANS lui serait un faux resultat."""
-    global _APPLIED_EDIT_LORAS
-    wanted = list(EDIT_LORAS) if EDIT_LORAS_ENABLED else []
+    demande ce preset, une edition SANS lui serait un faux resultat.
+
+    DIVERGENCE KLEIN. Chez l'amont, edition et base sont DEUX modeles distincts, donc
+    deux jeux d'adaptateurs independants. Ici c'est le MEME objet (cf. FORK.md § H):
+      - les deux jeux se disputaient l'espace de noms `cz_lora_i` -> "Adapter name
+        cz_lora_0 already in use" des qu'un LoRA de base ET un preset d'edition
+        etaient poses (plantage franc, aucune image);
+      - et `set_adapters` remplacant la liste active, poser l'edition DESACTIVAIT
+        silencieusement les LoRA de base.
+    On synchronise donc l'UNION (base + edition) en un seul appel, avec un seul etat
+    de verite `_APPLIED_LORAS`. `_APPLIED_EDIT_LORAS` reste le sous-ensemble edition
+    (contrat cz_ui: il l'affiche dans la ligne de log de generate_omni)."""
+    global _APPLIED_LORAS, _APPLIED_EDIT_LORAS
+    edit = list(EDIT_LORAS) if EDIT_LORAS_ENABLED else []
     # LoRA Lightning du mode rapide: empilee APRES les presets (independante de la
     # case 'Edit LoRAs', qui ne concerne que les presets de tache).
     if EDIT_SPEED and EDIT_SPEED.get("path"):
-        wanted.append((EDIT_SPEED["path"], 1.0))
-    ok, _APPLIED_EDIT_LORAS = _sync_adapters(pipe, wanted, _APPLIED_EDIT_LORAS,
-                                             tag="edit LoRA")
+        edit.append((EDIT_SPEED["path"], 1.0))
+    # Union base + edition, sans doublon de chemin (le 1er poids gagne, meme regle
+    # que le protocole pour `loras`).
+    seen, wanted = set(), []
+    for pw in list(LORAS) + edit:
+        if pw[0] not in seen:
+            seen.add(pw[0])
+            wanted.append(pw)
+    ok, applied = _sync_adapters(pipe, wanted, _APPLIED_LORAS, tag="edit LoRA")
     if not ok:
+        _APPLIED_EDIT_LORAS = []
         raise RuntimeError("edit LoRA could not be applied on the edit pipe "
                            "(see log); nothing was generated")
+    _APPLIED_LORAS = applied
+    _APPLIED_EDIT_LORAS = [pw for pw in applied if pw in edit]
 
 
 def _swap_transformer(pipe):

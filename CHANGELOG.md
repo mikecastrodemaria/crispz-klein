@@ -7,6 +7,29 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.18.2 — First edit LoRA in the catalogue, and two traps it exposed
+
+`Consistence-Edit` ([lrzjason/Consistance_Edit_Lora](https://huggingface.co/lrzjason/Consistance_Edit_Lora),
+Apache-2.0, rank 128, ~368 MB) is the first edit preset that actually loads on
+FLUX.2-klein-4B. It restores high-frequency detail while preserving colour and
+structure — a finishing pass, not creative editing. Suggested weight 0.6.
+
+Integrating it surfaced two bugs that would have hit any LoRA:
+
+- **Mixed key dialects.** The file carries 160 PEFT keys (`lora_A`/`lora_B`) plus 40
+  in `lora.down`/`lora.up`. peft loads what it recognises and creates a FRESH adapter
+  for the rest, so the LoRA applied **partially and silently** — only a RuntimeWarning
+  buried in the output. `_lora_needs_normalizing()` now detects this from the header
+  and `_load_lora_normalized()` maps `down`→`A`, `up`→`B` before loading, and logs it.
+- **Adapter namespace collision.** Upstream, edit and base are two models, so two
+  independent adapter sets. Here they are the SAME object: both used `cz_lora_i`, so a
+  base LoRA plus an edit preset died on "Adapter name cz_lora_0 already in use" — and
+  `set_adapters` replacing the active list meant applying the edit set silently
+  deactivated the base LoRAs. `_apply_edit_loras` now syncs the UNION of both sets
+  (deduped by path, first weight wins) with a single source of truth.
+
+Covered by tests/test_lora_dialect.py; verified on GPU with a real edit.
+
 ## 1.18.1 — Finish the rename, and three things it uncovered
 
 The 1.18.0 port left the engine correct but the product still called itself
