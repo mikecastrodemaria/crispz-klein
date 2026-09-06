@@ -205,7 +205,11 @@ def caps_dict():
             # input + 1 ref (spec.refs). Listage leger, rien n'est telecharge.
             "edit_loras": _edit_lora_catalog(),
             # Modes rapides acceptes par spec.fast sur l'op edit.
-            "edit_fast": ["off"]}      # klein: deja distille, rien a accelerer
+            # klein est deja distille a 4 steps et aucune LoRA Lightning FLUX.2
+            # n'existe: il n'y a rien a accelerer, la liste se reduit a 'off' et
+            # l'UI masque le controle. Elle reste presente (et non absente) pour
+            # que les clients de la famille lisent toujours le meme champ.
+            "edit_fast": ["off"]}
 
 
 def _edit_lora_catalog():

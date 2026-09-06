@@ -7,6 +7,25 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.18.5 — Hide what klein cannot do, stop advertising what it now can
+
+Two stale labels, both mine, both from the moment the catalogue was empty:
+
+- **"Edit LoRA presets (none published for FLUX.2 yet)"** — no longer true since
+  1.18.2, and the help still listed the Qwen presets (Photo-to-Anime, Any-Light,
+  Upscaler, Multiple-Angles) that cannot load here. It now says what it actually
+  guarantees: only LoRAs verified to load on FLUX.2 Klein are listed.
+- **"Edit speed"** was still offered with help describing Lightning 2509/2511 and
+  Rapid-AIO. On klein there is nothing to accelerate — the model is already
+  distilled to 4 steps with no CFG, and no FLUX.2 Lightning LoRA exists — so the
+  dropdown only ever held "Off". The whole row is now HIDDEN when the only choice
+  is "Off", the way crispz-krea2 hides what its family cannot do. The components
+  are built and merely invisible, so the handlers stay wired: nothing to re-cable
+  the day an acceleration LoRA ships.
+
+`caps.edit_fast` still reports `["off"]` rather than disappearing, so family
+clients keep reading the same field.
+
 ## 1.18.4 — Say it once, and stop calling things 'zimage'
 
 The 4B/9B guard added in 1.18.3 was right but unusable in practice: it repeated a

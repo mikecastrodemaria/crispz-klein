@@ -3417,10 +3417,11 @@ def build_ui():
                                 with gr.Column(scale=2, min_width=360):
                                     edit_lora_dd = gr.Dropdown(
                                         choices=_edit_lora_choices(), value="None",
-                                        label="Edit LoRA presets (none published for FLUX.2 yet)",
+                                        label="Edit LoRA presets",
                                         info="✓ = on disk, ⬇ = fetched from Hugging Face on first "
-                                             "use. Photo-to-Anime, Any-Light, Upscaler, "
-                                             "Multiple-Angles... No trigger word: describe the edit.")
+                                             "use. Only LoRAs verified to LOAD on FLUX.2 Klein are "
+                                             "listed - the Qwen-Image-Edit presets of the upstream "
+                                             "forks cannot. No trigger word: describe the edit.")
                                     with gr.Row():
                                         edit_lora_prompt_btn = gr.Button("Use example prompt", size="sm")
                                         edit_lora_refresh_btn = gr.Button("Refresh presets", size="sm")
@@ -3431,18 +3432,29 @@ def build_ui():
                                                             label="Edit LoRA weight",
                                                             elem_classes="cz-lora-weight")
                                     edit_lora_status = gr.Markdown("", elem_classes="cz-omni-status")
-                            # Mode rapide de l'edition: Lightning (LoRA empilee, 4/8 steps,
-                            # CFG off) ou Auto (modele deja distille: Rapid-AIO, merge).
-                            with gr.Row(elem_classes="cz-omni-controls", equal_height=False):
+                            # Mode rapide de l'edition. SANS OBJET chez klein: le modele
+                            # est deja distille a 4 steps sans CFG, et il n'existe aucune
+                            # LoRA Lightning FLUX.2 a empiler -> edit_speed_choices() est
+                            # vide et la ligne entiere est MASQUEE (comme krea2 masque ce
+                            # qu'il ne sait pas faire). Les composants sont construits mais
+                            # invisibles: les handlers restent cables, rien a recabler si
+                            # une LoRA d'acceleration FLUX.2 parait un jour.
+                            # 'Off' est toujours propose: la ligne n'a d'interet que s'il
+                            # existe AUTRE CHOSE que 'Off' a choisir.
+                            _speed_choices = cz_pipeline.edit_speed_choices()
+                            _speed_useful = any(c.strip().lower() != "off"
+                                                for c in _speed_choices)
+                            with gr.Row(elem_classes="cz-omni-controls", equal_height=False,
+                                        visible=_speed_useful):
                                 with gr.Column(scale=2, min_width=360):
                                     edit_speed_dd = gr.Dropdown(
-                                        choices=cz_pipeline.edit_speed_choices(),
+                                        choices=_speed_choices,
                                         value=_initial_edit_speed(),
                                         label="Edit speed",
-                                        info="Lightning N steps = stacks the Lightning edit LoRA "
-                                             "(2509/2511 picked from the edit model), N steps, "
-                                             "CFG off. Auto = steps/guidance from the model "
-                                             "profile (Rapid-AIO, Lightning merges). Off = Settings.")
+                                        info="Stacks an acceleration LoRA and forces its step "
+                                             "count. No FLUX.2 Klein one exists yet, and klein "
+                                             "is already distilled to 4 steps - so this is "
+                                             "hidden until one ships.")
                                 with gr.Column(scale=1, min_width=260):
                                     edit_speed_status = gr.Markdown("", elem_classes="cz-omni-status")
                             omni_edit_btn = gr.Button("✏️ Edit (Ref 1 + prompt -> image)",
@@ -3717,7 +3729,7 @@ def build_ui():
                             lora_status = gr.Markdown("")
                             edit_loras_cb = gr.Checkbox(
                                 value=cz_pipeline.EDIT_LORAS_ENABLED,
-                                label="Edit LoRAs (no FLUX.2 preset published yet)",
+                                label="Edit LoRAs",
                                 info="Applies the edit LoRA chosen under the reference images "
                                      "(Reference (Omni) tab) on the EDIT pipe. Off = the preset "
                                      "is kept but not applied (with/without comparison).")
