@@ -32,7 +32,7 @@ import torch
 from PIL import Image
 
 # Version de l'application (affichee dans le titre; entrees CHANGELOG.md par version).
-APP_VERSION = "1.18.0"
+APP_VERSION = "1.18.1"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PREFS_PATH = os.path.join(HERE, "preferences.json")
@@ -46,7 +46,7 @@ DEFAULT_DENOISE = 0.30
 DEFAULT_STEPS = 12
 DEFAULT_TILE = 760
 DEFAULT_OVERLAP = 32
-# Tiling de la passe diffusion Z-Image (4K+). 0 = image entiere (defaut).
+# Tiling de la passe diffusion (4K+). 0 = image entiere (defaut).
 DEFAULT_REFINE_TILE = 0
 DEFAULT_REFINE_OVERLAP = 64
 DEFAULT_SAVE_MODE = "display"        # display | local | alongside | custom

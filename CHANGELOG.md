@@ -7,6 +7,31 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.18.1 — Finish the rename, and three things it uncovered
+
+The 1.18.0 port left the engine correct but the product still called itself
+crispz-qwen-edit in places. Renaming it surfaced real bugs, not just labels:
+
+- **`install.sh` still checked for `QwenImageImg2ImgPipeline`.** Only the Windows
+  installer had been updated, so a Linux/macOS install ended on a false error.
+- **Every GGUF FLUX.2 checkpoint was silently hidden.** `gguf_arch` was pinned to
+  `qwen_image` in the config, and a FLUX.2 GGUF declares `flux`/`flux2`, so
+  `list_checkpoints()` skipped it with "this build only loads 'qwen_image'". The
+  accepted set is now `flux2,flux`, and because that label does NOT distinguish
+  FLUX.1 from FLUX.2, the tensor **layout** is the real judge: the positive
+  signature is now `x_embedder` + `context_embedder` +
+  `double_stream_modulation_img`, so a FLUX.1 city96 GGUF is still rejected.
+- **`preferences.example.json` and `presets/example.json`** shipped
+  `Tongyi-MAI/Z-Image-Turbo`, so copying either gave an unloadable config.
+
+Also rewritten for klein: `run_quality_rtx5090.bat` (it forced `CZ_OFFLOAD=model`
+and an HF-offline note about a 46 GB Qwen cache — klein is 15 GB and wants
+offload `none`), `fooocus_extra.json`, `config_modification_tutorial.txt`, the
+launcher scripts, and the `_edit_loras_help` / `_gguf_arch_help` config strings.
+`tools/check_zimage_models.py` watched for a Z-Image Omni/Edit release that klein
+does not need; it becomes `tools/check_klein_extras.py`, which watches for what
+klein actually lacks — a FLUX.2 ControlNet or edit LoRA.
+
 ## 1.18.0 — Engine: FLUX.2 Klein 4B, one model for the whole surface
 
 Fork of crispz-qwen-edit. `Flux2KleinPipeline` does txt2img **and**

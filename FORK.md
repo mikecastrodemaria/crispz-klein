@@ -141,7 +141,36 @@ le lock, pas `requirements.txt`) sortait donc un venv sans `gguf` → `test_quan
 en échec et un `.gguf` refusé à l'exécution. `hf_xet` manquait aussi (téléchargements HF
 en HTTP lent). Les deux sont ajoutés au lock avec leur version installée.
 
-### F. L'API omni survit, elle ne disparaît PAS
+### F. Le raisonnement Ollama finissait dans le prompt — *imprévu*
+
+`cz_ollama` n'avait aucune défense contre les modèles « thinking » (Qwen3,
+DeepSeek-R1, Kimi…) : leur monologue interne arrivait tel quel dans `response`,
+donc **dans le prompt envoyé au text encoder** (« Okay, the user wants a prompt
+for… » collé devant l'image à générer). Deux défenses, parce qu'aucune ne suffit :
+
+1. `think: false` dans le payload `/api/generate` (Ollama ≥ 0.9). Un modèle qui ne
+   connaît pas le champ répond 400 → `_ollama_http` **rejoue sans**, plutôt que de
+   casser l'appel.
+2. `_strip_thinking()` sur chaque réponse : bloc `<think>…</think>` fermé, bloc
+   ouvert jamais fermé, balise fermante orpheline. Certains modèles émettent les
+   balises quoi qu'il arrive (template Modelfile, vieux Ollama).
+
+Couvert par `tests/test_ollama_thinking.py`, et vérifié contre un vrai modèle
+thinking local.
+
+### G. Détection GGUF : tout FLUX.2 était écarté — *imprévu, sérieux*
+
+`gguf_arch` valait `qwen_image` (hérité de la config amont), or un GGUF FLUX.2
+déclare `flux` ou `flux2` → `list_checkpoints()` l'écartait avec « this build only
+loads 'qwen_image' ». **Aucun GGUF FLUX.2 n'apparaissait dans le dropdown.**
+
+Corrigé sur trois plans : l'ensemble accepté devient `flux2,flux` (code et config) ;
+comme cette étiquette **ne distingue pas FLUX.1 de FLUX.2**, c'est le layout qui
+tranche ; et la signature positive passe de `img_in`/`txt_in`/`txt_norm` à
+`x_embedder` + `context_embedder` + `double_stream_modulation_img`. Un GGUF FLUX.1
+au layout city96 reste donc rejeté comme `foreign`.
+
+### H. L'API omni survit, elle ne disparaît PAS
 
 **Correction du plan initial** : `cz_ui.py` et `cz_protocol.py` référencent ces
 symboles 20+ fois. Les supprimer casserait les deux. Ils sont donc **repointés**,

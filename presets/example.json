@@ -9,7 +9,7 @@
   "sampler": "euler",
   "schedule": "sgm_uniform",
   "image_number": 1,
-  "checkpoint": "Tongyi-MAI/Z-Image-Turbo",
+  "checkpoint": "black-forest-labs/FLUX.2-klein-4B",
   "transformer": "",
   "loras": []
 }

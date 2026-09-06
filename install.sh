@@ -16,8 +16,9 @@ set -e
 cd "$(dirname "$0")"
 
 # Pipeline attendu pour cette famille de modele. SEULE ligne qui differe entre
-# crispz-studio (ZImage), crispz-krea (Flux) et crispz-qwen-edit (Qwen).
-CHECK_PIPE=QwenImageImg2ImgPipeline
+# crispz-studio (ZImage), crispz-krea2 (Krea2), crispz-qwen-edit (Qwen)
+# et crispz-klein (FLUX.2).
+CHECK_PIPE=Flux2KleinInpaintPipeline
 
 USE_VENV=1
 ISOLATED=1

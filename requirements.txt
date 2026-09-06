@@ -31,7 +31,7 @@ spandrel
 peft
 
 # GGUF quantized single-file transformers (GGUFQuantizationConfig). Lets a quantized
-# Qwen-Image .gguf (e.g. Q4_K_M ~11GB) fit in consumer VRAM, fast, no offload. Unlike
+# A quantized .gguf transformer fits in consumer VRAM, fast, no offload. Unlike
 # ComfyUI FP8 .safetensors (transformer-only, not loadable by diffusers).
 gguf
 

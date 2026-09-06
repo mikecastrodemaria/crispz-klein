@@ -147,7 +147,7 @@ def test_examples_from_respects_limit():
 
 def test_get_version_by_hash_carries_images(monkeypatch=None):
     """by-hash doit remonter ses images (elles contiennent les prompts) -> 0 requete de plus."""
-    payload = {"id": 42, "modelId": 7, "name": "v1", "baseModel": "Z-Image",
+    payload = {"id": 42, "modelId": 7, "name": "v1", "baseModel": "FLUX.2",
                "trainedWords": ["trg"], "model": {"name": "M"},
                "images": [{"url": "u", "meta": {"prompt": "hello"}}]}
     old = cz_civitai._api_get
@@ -172,16 +172,16 @@ def _with_model_payload(payload, fn):
 # Page CivitAI typique: la derniere version publiee l'est pour une AUTRE base.
 _MIXED_BASES = {"modelVersions": [
     {"id": 300, "name": "3.0 (Krea2)", "baseModel": "Krea 2"},
-    {"id": 200, "name": "2.0", "baseModel": "Z-Image"},
-    {"id": 100, "name": "1.0", "baseModel": "Z Image"},     # libelle variant -> meme base
+    {"id": 200, "name": "2.0", "baseModel": "FLUX.2"},
+    {"id": 100, "name": "1.0", "baseModel": "Flux 2"},      # libelle variant -> meme base
 ]}
 
 
 def test_latest_version_ignores_other_base_models():
-    """Regression: '3.0 (Krea2)' etait signale comme update d'un LoRA Z-Image alors qu'il
+    """Regression: '3.0 (Krea2)' etait signale comme update d'un LoRA FLUX.2 alors qu'il
     ne tourne pas dessus. La derniere version de la MEME base doit gagner."""
     got = _with_model_payload(_MIXED_BASES,
-                              lambda: cz_civitai.get_latest_version(9, base_model="Z-Image"))
+                              lambda: cz_civitai.get_latest_version(9, base_model="FLUX.2"))
     assert got["id"] == 200 and got["name"] == "2.0"
     # Sans filtre (base locale inconnue) -> comportement historique: la plus recente.
     raw = _with_model_payload(_MIXED_BASES, lambda: cz_civitai.get_latest_version(9))
@@ -190,11 +190,11 @@ def test_latest_version_ignores_other_base_models():
 
 def test_update_flag_not_raised_by_a_new_base_model():
     upd = _with_model_payload(
-        _MIXED_BASES, lambda: cz_civitai._update_fields(9, 200, base_model="Z-Image"))
-    assert upd["update_available"] is False, "Krea2 n'est pas un update pour du Z-Image"
-    # Vraie mise a jour: on est sur la 1.0 Z-Image -> la 2.0 Z-Image (pas la 3.0 Krea2).
+        _MIXED_BASES, lambda: cz_civitai._update_fields(9, 200, base_model="FLUX.2"))
+    assert upd["update_available"] is False, "Krea2 n'est pas un update pour du FLUX.2"
+    # Vraie mise a jour: on est sur la 1.0 FLUX.2 -> la 2.0 FLUX.2 (pas la 3.0 Krea2).
     upd = _with_model_payload(
-        _MIXED_BASES, lambda: cz_civitai._update_fields(9, 100, base_model="z image"))
+        _MIXED_BASES, lambda: cz_civitai._update_fields(9, 100, base_model="flux 2"))
     assert upd["update_available"] is True and upd["latest_versionId"] == 200
     assert upd["latest_versionName"] == "2.0"
 
@@ -221,7 +221,7 @@ def test_update_flag_when_api_omits_base_models():
     contradictoire) -> on ne filtre pas et on garde le comportement historique."""
     payload = {"modelVersions": [{"id": 300, "name": "3.0"}, {"id": 200, "name": "2.0"}]}
     upd = _with_model_payload(
-        payload, lambda: cz_civitai._update_fields(9, 200, base_model="Z-Image"))
+        payload, lambda: cz_civitai._update_fields(9, 200, base_model="FLUX.2"))
     assert upd["update_available"] is True and upd["latest_versionId"] == 300
 
 

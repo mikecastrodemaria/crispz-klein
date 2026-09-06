@@ -1,6 +1,6 @@
 """Unit tests for the transformer hot-swap (_swap_transformer) — no model is loaded.
 
-Regression guard for: switching Z-Image checkpoint A -> B (same base repo) used to
+Regression guard for: switching checkpoint A -> B (same base repo) used to
 free_vram() and reload the WHOLE pipeline (transformer + VAE + Qwen3-4B text encoder).
 Only the transformer must be reloaded; the base components stay in VRAM.
 
@@ -133,8 +133,8 @@ def test_set_zimage_model_new_base_repo_still_reloads():
     P._BASE_PIPE = object()
     P._LOADED_KEY = ("old/repo", None, "none")
     P.BASE_REPO = "old/repo"
-    P.set_zimage_model("Tongyi-MAI/Z-Image-Turbo")
-    assert P.BASE_REPO == "Tongyi-MAI/Z-Image-Turbo"
+    P.set_zimage_model("black-forest-labs/FLUX.2-klein-4B")
+    assert P.BASE_REPO == "black-forest-labs/FLUX.2-klein-4B"
     assert P._BASE_PIPE is None, "changer de repo de base doit liberer le pipe"
     assert P._LOADED_KEY is None
 

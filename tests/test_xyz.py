@@ -81,7 +81,7 @@ def test_schedule_alias_simple():
 
 def test_build_jobs():
     base_vals = _base_vals()
-    base_ms = {"base_repo": "Tongyi-MAI/Z-Image-Turbo", "transformer": None,
+    base_ms = {"base_repo": "black-forest-labs/FLUX.2-klein-4B", "transformer": None,
                "loras": [], "sampler": "euler", "schedule": "sgm_uniform"}
     axes = [("Steps", [4, 8, 12]), ("Guidance", [0.0, 3.5])]
     jobs, meta = cz_ui._xyz_build_jobs(axes, base_vals, base_ms)

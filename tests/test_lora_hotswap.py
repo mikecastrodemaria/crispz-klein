@@ -1,7 +1,7 @@
 """Unit tests for the LoRA hot-swap logic (_apply_loras) — no model is loaded.
 
 Regression guard for: activating a LoRA used to call free_vram() and reload the whole
-Z-Image pipeline (transformer + VAE + Qwen3 encoder, ~50s+). LoRAs must now be swapped
+pipeline (transformer + VAE + Qwen3 encoder, ~9s). LoRAs must now be swapped
 on the cached pipe instead.
 
 Run:  .venv/Scripts/python tests/test_lora_hotswap.py

@@ -24,9 +24,9 @@ def _stub_vals(prompt="a cat", use_input=False, w=1024, h=768, steps=8, n=2, see
 
 
 def test_label():
-    ms = {"base_repo": "Tongyi-MAI/Z-Image-Turbo", "transformer": None}
+    ms = {"base_repo": "black-forest-labs/FLUX.2-klein-4B", "transformer": None}
     lbl = cz_ui._q_label(_stub_vals(), ms)
-    assert "txt2img" in lbl and "Z-Image-Turbo" in lbl and "1024x768" in lbl
+    assert "txt2img" in lbl and "FLUX.2-klein-4B" in lbl and "1024x768" in lbl
     assert "8 steps" in lbl and "seed 42" in lbl and "x2" in lbl and "a cat" in lbl
     # transformer wins over base repo; img2img mode; long prompt truncated
     ms2 = {"base_repo": "x", "transformer": "D:/models/juggernaut_z.safetensors"}

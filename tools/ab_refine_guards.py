@@ -16,7 +16,7 @@ demande. Comparer A a 0.60 et B demande a 0.60 melange donc deux effets. Pour is
 tuilage, relancer A au denoise EFFECTIF de B (= le plafond) -- d'ou --only, et --recrop
 qui recoupe sans rien rediffuser.
 
-Mesure sur une sortie 4096x4096 (RTX 5090, Z-Image, 8 steps): whole-image 581s contre
+Mesure sur une sortie 4096x4096 (RTX 5090, moteur de diffusion, 8 steps): whole-image 581s contre
 ~37s en tuile 896 a denoise effectif egal, avec en prime une peau moins marbree et la
 geometrie du sujet preservee (le whole-image 4K deplace et retrecit le sujet).
 

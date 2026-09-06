@@ -966,11 +966,14 @@ def _load_dequant_state_dict(path):
     return sd
 
 
-# Architecture attendue dans les .gguf. Un GGUF de diffusion declare son archi dans
-# 'general.architecture': 'flux' (city96 FLUX.1 dev/schnell/krea), 'qwen_image',
-# 'krea2' (Krea 2 = architecture PROPRE qui exige ComfyUI + son encodeur/VAE),
-# 'llama'/'gemma3'... pour les LLM. On ne charge que 'qwen_image' ici.
-GGUF_ARCH = str(CONFIG.get("gguf_arch") or "qwen_image").strip().lower()
+# Architectures acceptees dans les .gguf. Un GGUF de diffusion declare son archi dans
+# 'general.architecture': 'flux'/'flux2' (FLUX.1 comme FLUX.2 -- l'etiquette ne les
+# distingue PAS), 'qwen_image', 'krea2', 'llama'/'gemma3' pour les LLM.
+# On accepte donc largement au niveau de l'etiquette et on laisse le LAYOUT trancher
+# (_gguf_layout): les noms de tenseurs de FLUX.2 sont une preuve, pas une declaration.
+# Surchargeable par config 'gguf_arch' (chaine, ou liste separee par des virgules).
+GGUF_ARCH = str(CONFIG.get("gguf_arch") or "flux2,flux").strip().lower()
+GGUF_ARCHS = {a.strip() for a in GGUF_ARCH.split(",") if a.strip()}
 
 _GGUF_FIXED = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i",
                6: "<f", 7: "<?", 10: "<Q", 11: "<q", 12: "<d"}
@@ -1026,24 +1029,28 @@ def _gguf_arch(path, max_kv=64):
 # stable-diffusion.cpp): l'archi declaree est bien 'qwen_image' mais AUCUNE cle ne
 # matche -> tous les poids restent sur le device 'meta' et le .to(device) explose en
 # "Cannot copy out of meta tensor". On detecte ce cas a l'en-tete pour refuser proprement.
-_GGUF_OK_PREFIXES = ("transformer_blocks.", "img_in", "txt_in", "time_text_embed",
+_GGUF_OK_PREFIXES = ("transformer_blocks.", "single_transformer_blocks.",
+                     "x_embedder", "context_embedder", "double_stream_modulation",
+                     "single_stream_modulation", "time_guidance_embed",
                      "norm_out", "proj_out")
 
-# Signature qui identifie POSITIVEMENT un transformer Qwen-Image, par opposition aux
-# autres DiT diffusers. Les prefixes ci-dessus sont trop laches pour ca: 'transformer_
-# blocks.', 'time_text_embed', 'norm_out' et 'proj_out' existent AUSSI chez FLUX (qui
-# nomme ses entrees x_embedder/context_embedder). Ces trois cles-la, non:
-_QWEN_GGUF_SIGNATURE = ("img_in.weight", "txt_in.weight", "txt_norm.weight")
+# Signature qui identifie POSITIVEMENT un transformer FLUX.2, par opposition aux autres
+# DiT diffusers. Les prefixes ci-dessus sont trop laches: 'transformer_blocks.',
+# 'norm_out' et 'proj_out' existent AUSSI chez Qwen-Image et FLUX.1. Ces trois cles-la,
+# non -- relevees sur le transformer reel de FLUX.2-klein-4B (169 tenseurs).
+# Le nom de la constante est garde pour limiter la surface de conflit au merge amont.
+_QWEN_GGUF_SIGNATURE = ("x_embedder.weight", "context_embedder.weight",
+                        "double_stream_modulation_img.linear.weight")
 
 
 def _gguf_layout(path):
     """Etat du layout de tenseurs d'un .gguf, lu a l'en-tete (gguf mmap):
-      'qwen'    -> signature Qwen-Image presente: c'est une PREUVE, bien plus fiable que
+      'flux2'   -> signature FLUX.2 presente: c'est une PREUVE, bien plus fiable que
                    le 'general.architecture' declare (des outils de conversion tamponnent
                    n'importe quoi -- vu 'wan' sur des Qwen-Image parfaitement valides);
       'foreign' -> des noms lisibles, mais aucun marqueur diffusers connu (conversion
                    type stable-diffusion.cpp: blocks.N.attn.wq, txtmlp, tproj...);
-      'unknown' -> en-tete illisible ou layout diffusers sans la signature Qwen: on ne
+      'unknown' -> en-tete illisible ou layout diffusers sans la signature FLUX.2: on ne
                    tranche pas ici, l'archi declaree reste le juge."""
     try:
         from gguf import GGUFReader
@@ -1051,7 +1058,7 @@ def _gguf_layout(path):
         if not names:
             return "unknown"
         if all(any(n == sig for n in names) for sig in _QWEN_GGUF_SIGNATURE):
-            return "qwen"
+            return "flux2"
         if any(n.startswith(_GGUF_OK_PREFIXES) for n in names):
             return "unknown"
         return "foreign"
@@ -1061,7 +1068,7 @@ def _gguf_layout(path):
 
 
 def _gguf_layout_unsupported(path):
-    """Renvoie une raison (str) si le .gguf n'utilise PAS le layout de tenseurs Qwen
+    """Renvoie une raison (str) si le .gguf n'utilise PAS le layout de tenseurs FLUX.2
     attendu par diffusers, sinon None. Lecture d'en-tete seule."""
     if _gguf_layout(path) != "foreign":
         return None
@@ -1110,16 +1117,16 @@ def list_checkpoints():
                 if lay == "foreign":
                     _log(f"checkpoint skipped ({_gguf_layout_unsupported(fp)}): {f}")
                     continue
-                if lay == "qwen":
-                    if a and a != GGUF_ARCH:
+                if lay == "flux2":
+                    if a and a not in GGUF_ARCHS:
                         _log(f"GGUF declares architecture '{a}' but its tensors ARE a "
-                             f"Qwen-Image transformer (mislabelled by the conversion "
+                             f"FLUX.2 transformer (mislabelled by the conversion "
                              f"tool) -> loaded anyway: {f}")
                 # layout indetermine -> l'archi declaree reste le juge.
-                elif a and a != GGUF_ARCH:
+                elif a and a not in GGUF_ARCHS:
                     _log(f"checkpoint skipped (GGUF architecture '{a}', this build only "
-                         f"loads '{GGUF_ARCH}'; that model needs its own pipeline and "
-                         f"text encoder/VAE): {f}")
+                         f"loads {sorted(GGUF_ARCHS)}; that model needs its own pipeline "
+                         f"and text encoder/VAE): {f}")
                     continue
             seen.add(f)
             out.append(f)

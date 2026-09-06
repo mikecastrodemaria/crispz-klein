@@ -4,7 +4,7 @@
 > (fork of [crispz-qwen-edit](https://github.com/mikecastrodemaria/crispz-qwen-edit),
 > itself a Fooocus-style fork of
 > [crispz](https://github.com/mikecastrodemaria/crispz)).
-> Current version: **1.18.0** — see [CHANGELOG.md](CHANGELOG.md).
+> Current version: **1.18.1** — see [CHANGELOG.md](CHANGELOG.md).
 
 ![crispz-klein — FLUX.2 Klein creation + editing studio](assets/screenshot.png)
 
