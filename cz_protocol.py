@@ -293,10 +293,10 @@ def validate_spec(spec, op="gen"):
         out["input"] = inp
         spec = dict(spec)
         spec["refs"] = [inp]
-        # Taille DEMANDEE par l'appelant -> transmise au pipe d'edition
-        # (preset Upscaler: sortie 2x). Taille par defaut -> l'edition garde
-        # les dimensions natives de l'entree (comportement historique).
-        out["size_explicit"] = bool(spec.get("width") and spec.get("height"))
+        # size_explicit est desormais calcule dans le tronc commun (plus bas), pour
+        # TOUS les ops: il ne servait qu'a l'op 'edit', et un 'gen' AVEC refs -- qui
+        # passe par la meme route omni -- repartait donc avec la taille de la
+        # REFERENCE au lieu de celle demandee.
         # fast = mode rapide de l'edition: "off" | "auto" (profil du modele,
         # Rapid-AIO / merge Lightning) | "lightning-4" | "lightning-8" (LoRA
         # Lightning empilee). Absent -> le reglage de l'instance reste.
@@ -370,6 +370,12 @@ def validate_spec(spec, op="gen"):
             if not 0.0 <= den <= 1.0:
                 raise SpecError("'denoise' out of range (0-1)")
         out["denoise"] = den
+    # Taille DEMANDEE par l'appelant. Vrai des que le spec porte width ET height,
+    # quel que soit l'op: la route omni (edit, ou gen avec refs) transmet alors ces
+    # dimensions au pipe au lieu de laisser l'edition conserver celles de l'image
+    # d'entree. Sans ca une case 800x1312 rendue avec une reference 1280x832
+    # ressortait en paysage et se faisait recadrer a la composition.
+    out["size_explicit"] = bool(spec.get("width") and spec.get("height"))
     out["negative"] = str(spec.get("negative") or "").strip()
     if out["negative"] and not SUPPORTS_NEGATIVE:
         # klein est step-wise distilled: pas de CFG -> pas de negative prompt. On le dit
