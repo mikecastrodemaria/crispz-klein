@@ -86,14 +86,14 @@ on those axes, `__wildcards__` on the Prompt axes).
 ```bash
 # Single-file checkpoint (Civitai BF16/FP16) as the transformer
 python app.py --txt2img --prompt "..." \
-    --zimage-transformer "D:/.../FLUX2/my_klein_finetune.safetensors" --gen-steps 4
+    --klein-transformer "D:/.../FLUX2/my_klein_finetune.safetensors" --gen-steps 4
 
 # Transformer from a diffusers repo/folder (keeps base VAE/encoder)
 python app.py --txt2img --prompt "..." \
-    --zimage-transformer "<hf-repo-with-a-flux2-transformer>"
+    --klein-transformer "<hf-repo-with-a-flux2-transformer>"
 
 # Full diffusers base
-python app.py --txt2img --prompt "..." --zimage-model "black-forest-labs/FLUX.2-klein-4B"
+python app.py --txt2img --prompt "..." --klein-model "black-forest-labs/FLUX.2-klein-4B"
 ```
 
 ## LoRA (up to 3, combinable)  — `--lora NAME[:WEIGHT]`

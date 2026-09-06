@@ -996,12 +996,13 @@ def _save_paths_to_prefs(esrgan_dir, checkpoints_dir=None, checkpoints_extra_dir
         set_loras_dir(loras_dir)
     if wildcards_dir:
         set_wildcards_dir(wildcards_dir)
-    _save_prefs_keys({"esrgan_dir": cz_esrgan.ESRGAN_DIR, "zimage_model": cz_pipeline.BASE_REPO,
+    _save_prefs_keys({"esrgan_dir": cz_esrgan.ESRGAN_DIR,
+                      cz_pipeline.CFG_MODEL_KEY: cz_pipeline.BASE_REPO,
                       "checkpoints_dir": cz_pipeline.CHECKPOINTS_DIR,
                       "checkpoints_extra_dir": cz_pipeline.CHECKPOINTS_EXTRA_DIR,
                       "loras_dir": cz_pipeline.LORAS_DIR,
                       "wildcards_dir": cz_prompt.WILDCARDS_DIR})
-    return (f"Saved to {PREFS_PATH}: esrgan_dir, zimage_model, checkpoints_dir, "
+    return (f"Saved to {PREFS_PATH}: esrgan_dir, {cz_pipeline.CFG_MODEL_KEY}, checkpoints_dir, "
             f"checkpoints_extra_dir, loras_dir, wildcards_dir={cz_prompt.WILDCARDS_DIR}")
 
 

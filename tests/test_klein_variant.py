@@ -66,13 +66,30 @@ def test_mismatch_is_refused_both_ways():
     assert _with_base("base-4b", 3072, lambda: P._safetensors_unsupported(p4)) is None
     msg = _with_base("base-4b", 3072, lambda: P._safetensors_unsupported(p9))
     assert msg and "9B" in msg and "4B" in msg, msg
-    assert "NON-COMMERCIAL" in msg, "la licence du 9B doit etre signalee"
+    # la raison par fichier reste COURTE: elle est repetee autant de fois qu'il y a
+    # de fichiers ecartes. Le mode d'emploi va dans le resume, une seule fois.
+    assert len(msg) < 90, f"raison trop longue ({len(msg)} car.): {msg}"
+    assert "NON-COMMERCIAL" not in msg
 
     # base 9B: la symetrie doit tenir
     assert _with_base("base-9b", 4096, lambda: P._safetensors_unsupported(p9)) is None
     msg = _with_base("base-9b", 4096, lambda: P._safetensors_unsupported(p4))
     assert msg and "4B" in msg, msg
     print("OK test_mismatch_is_refused_both_ways")
+
+
+def test_summary_carries_the_instructions_once():
+    """Le resume porte la clef a changer ET la licence du 9B - une seule fois."""
+    line = _with_base("base-4b", 3072, lambda: P._variant_skip_summary(11, 4096))
+    assert "11 checkpoint" in line, line
+    assert "FLUX.2-klein-9B" in line and "FLUX.2-klein-4B" in line, line
+    assert P.CFG_MODEL_KEY in line, f"la clef de config doit etre nommee: {line}"
+    assert "zimage_model" not in line, "l ancien nom ne doit plus apparaitre"
+    assert "NON-COMMERCIAL" in line, line
+    # sens inverse: pas de note de licence quand on ecarte du 4B
+    line = _with_base("base-9b", 4096, lambda: P._variant_skip_summary(2, 3072))
+    assert "NON-COMMERCIAL" not in line, line
+    print("OK test_summary_carries_the_instructions_once")
 
 
 def test_unknown_base_never_discards():
@@ -109,6 +126,7 @@ def test_file_without_signature_is_not_filtered():
 
 if __name__ == "__main__":
     for fn in (test_hidden_dim_read_from_header, test_mismatch_is_refused_both_ways,
+               test_summary_carries_the_instructions_once,
                test_unknown_base_never_discards, test_bogus_shape_is_not_taken_for_a_hidden_dim,
                test_file_without_signature_is_not_filtered):
         fn()

@@ -452,14 +452,16 @@ def cli_main(argv=None):
                              "Strongly recommended when exposing over LAN or a tunnel.")
     # Chemins config / modele
     parser.add_argument("--esrgan-dir", help="Override ESRGAN_DIR for this run")
-    parser.add_argument("--zimage-model",
+    # --zimage-* sont les anciens noms (crispz-studio / Z-Image): conserves comme
+    # alias masques pour ne casser aucun script existant, mais absents de --help.
+    parser.add_argument("--klein-model", "--zimage-model", dest="zimage_model",
                         help="Override the model: HF repo, diffusers folder, OR a single-file "
                              ".safetensors (Civitai) used as the transformer (VAE+encoder from base).")
-    parser.add_argument("--zimage-transformer",
+    parser.add_argument("--klein-transformer", "--zimage-transformer", dest="zimage_transformer",
                         help="Single-file .safetensors transformer override (Civitai), keeping "
-                             "the VAE + Qwen3 encoder from --zimage-model / the base repo.")
+                             "the VAE + Qwen3 encoder from --klein-model / the base repo.")
     parser.add_argument("--save-paths", action="store_true",
-                        help="Save --esrgan-dir and --zimage-model to preferences.json")
+                        help="Save --esrgan-dir and --klein-model to preferences.json")
     # Reports
     parser.add_argument("--list-models", action="store_true", help="List ESRGAN models then exit")
     parser.add_argument("--time-log", default=None,

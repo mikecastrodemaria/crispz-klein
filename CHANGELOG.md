@@ -7,6 +7,32 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.18.4 — Say it once, and stop calling things 'zimage'
+
+The 4B/9B guard added in 1.18.3 was right but unusable in practice: it repeated a
+four-line paragraph for EVERY skipped file. On a library with eleven klein-9B
+checkpoints that is eleven paragraphs, and the useful lines drown.
+
+Now: one short line per file (debug level), then ONE summary that carries the
+instructions — *"11 checkpoint(s) skipped: they are FLUX.2-klein-9B builds and
+this install runs FLUX.2-klein-4B. To use them, point 'klein_model' at the
+matching base repo. Note: FLUX.2-klein-9B is NON-COMMERCIAL..."*. Three lines
+instead of eleven paragraphs. The variant name is also written properly
+(`FLUX.2-klein-9B`, not `FLUX.2-klein 9B`).
+
+That message also exposed a naming problem: it told the user to set
+**`zimage_model`** — a Z-Image leftover from crispz-studio, meaningless in a
+FLUX.2 fork. The config and env keys are renamed:
+
+  klein_model        (was zimage_model,       env KLEIN_MODEL)
+  klein_transformer  (was zimage_transformer, env KLEIN_TRANSFORMER)
+  --klein-model / --klein-transformer  (CLI)
+
+Old names are still READ, and reading one logs a rename hint; the old CLI flags
+stay as hidden aliases so no existing script breaks. The Python module variables
+keep their names (`ZIMAGE_TRANSFORMER`, `set_zimage_model`…) — cz_ui, cz_cli and
+cz_protocol import them, that is the module's API contract.
+
 ## 1.18.3 — Tell 4B from 9B before loading, not after
 
 A klein-9B checkpoint loaded into the 4B pipeline died deep inside diffusers,
@@ -20,7 +46,7 @@ It is now read from the **header**, before any weight: the signature is
 `.linear.` in the diffusers one), whose second axis IS the hidden dim. The
 expected value comes from the configured base repo
 (`attention_head_dim * num_attention_heads`), so the guard is **base-relative and
-symmetric**: point `zimage_model` at the 9B repo and it is the 4B files that get
+symmetric**: point `klein_model` at the 9B repo and it is the 4B files that get
 refused. A base whose dimension cannot be determined filters nothing — the house
 rule is to never discard a model on a doubt.
 

@@ -214,6 +214,6 @@
     "log_level": "info",
     "_default_negative_prompt_help": "Inert on klein (distilled, no CFG). Kept empty on purpose.",
     "_omni_help": "klein needs NO separate edit model: multi-reference editing (up to 4 refs) is served by the base pipeline itself. The keys 'zimage_omni_model' / 'zimage_omni_base' of crispz-qwen-edit are gone on purpose - do not re-add them at merge time.",
-    "zimage_model": "black-forest-labs/FLUX.2-klein-4B",
-    "_zimage_model_help": "Base repo (HF) or a local diffusers folder / single-file checkpoint. Apache 2.0. Do NOT switch to FLUX.2-klein-9B: non-commercial licence, see FORK.md."
+    "klein_model": "black-forest-labs/FLUX.2-klein-4B",
+    "_klein_model_help": "Base repo (HF) or a local diffusers folder / single-file checkpoint. Apache 2.0. Do NOT switch to FLUX.2-klein-9B: non-commercial licence, see FORK.md."
 }

@@ -173,7 +173,7 @@ Seule la **dimension cachée** les sépare (3072 / 4096), et elle est lisible à
 l'en-tête : `double_stream_modulation_img` (`.lin.` au layout d'origine, `.linear.`
 au layout diffusers), dont le second axe EST la dimension. La valeur attendue vient
 du repo de base (`attention_head_dim × num_attention_heads`), donc la garde est
-**relative à la base et symétrique** — pointer `zimage_model` sur le 9B fait
+**relative à la base et symétrique** — pointer `klein_model` sur le 9B fait
 refuser les 4B. Base indéterminable → aucun filtrage (règle maison : ne jamais
 écarter sur un doute). Même contrôle sur le chemin GGUF.
 
@@ -295,8 +295,8 @@ Ce fork a été créé par `git clone` (et non par copie de dossier) : `config.t
 `preferences.json`, gitignorés, **ne sont pas venus**. C'est délibéré — c'est ce qui
 avait coûté quatre échecs de validation à crispz-krea2.
 
-Au premier `cp config-sample.txt config.txt`, vérifier : `zimage_model`
-(→ `black-forest-labs/FLUX.2-klein-4B`), `zimage_transformer` (doit rester absent),
+Au premier `cp config-sample.txt config.txt`, vérifier : `klein_model`
+(→ `black-forest-labs/FLUX.2-klein-4B`), `klein_transformer` (doit rester absent),
 `zimage_omni_model` / `zimage_omni_base` (**supprimées du sample, ne pas les
 réintroduire**), `model_profiles` (clés `klein` / `flux-2` / `flux2` à 4 steps),
 `default_gen_steps` (4), `default_guidance` (1.0), `default_performance`

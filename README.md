@@ -4,7 +4,7 @@
 > (fork of [crispz-qwen-edit](https://github.com/mikecastrodemaria/crispz-qwen-edit),
 > itself a Fooocus-style fork of
 > [crispz](https://github.com/mikecastrodemaria/crispz)).
-> Current version: **1.18.3** — see [CHANGELOG.md](CHANGELOG.md).
+> Current version: **1.18.4** — see [CHANGELOG.md](CHANGELOG.md).
 
 ![crispz-klein — FLUX.2 Klein creation + editing studio](assets/screenshot.png)
 
@@ -465,10 +465,10 @@ the guidance value is irrelevant (see below).
 ```bash
 # Pass a .safetensors directly as the model (treated as the transformer)
 python app.py --txt2img --prompt "..." \
-    --zimage-model "D:/models/flux2_klein_civitai.safetensors"
+    --klein-model "D:/models/flux2_klein_civitai.safetensors"
 
 # Or keep an HF/diffusers base and override only the transformer
-python app.py --zimage-transformer "D:/models/flux2_klein_civitai.safetensors" ...
+python app.py --klein-transformer "D:/models/flux2_klein_civitai.safetensors" ...
 ```
 
 The single-file is loaded as the **transformer**; the **VAE + the Qwen3 text encoder**
@@ -548,7 +548,7 @@ just their **transformer** instead and keep the base components:
    (provides VAE + Qwen3 encoder + tokenizer).
 3. **Generate** (downloads the transformer once, ~7 GB).
 
-CLI equivalent: `--zimage-transformer <repo-or-folder>`.
+CLI equivalent: `--klein-transformer <repo-or-folder>`.
 
 > FLUX.2 Klein is recent, so the community fine-tune scene is still thin. The
 > loading path is the one inherited from the Qwen fork and it is **tested** — a
@@ -727,7 +727,7 @@ pip install -r requirements.txt
 Two paths are configurable, persisted in `preferences.json`. Resolution order on
 each launch:
 
-1. Environment variable (`ESRGAN_DIR`, `ZIMAGE_MODEL`)
+1. Environment variable (`ESRGAN_DIR`, `KLEIN_MODEL`)
 2. `preferences.json` at the project root
 3. Default: `./upscale_models` for ESRGAN, `black-forest-labs/FLUX.2-klein-4B` for the model
 
@@ -737,12 +737,12 @@ Three ways to change them:
   checkpoint** dropdown (it reloads on next Generate), set the **Checkpoints /
   Extra checkpoints / ESRGAN** folders, then **Refresh ESRGAN** or **Save paths**
   (writes `preferences.json`).
-- **CLI**: `--esrgan-dir <path>`, `--zimage-model <repo_or_path>`, `--save-paths`
+- **CLI**: `--esrgan-dir <path>`, `--klein-model <repo_or_path>`, `--save-paths`
   to persist (with or without `-i`).
 - **Interactive CLI** (`cli.sh` / `cli.bat`): first prompt = ESRGAN folder +
   Klein model. Saved to `preferences.json` if you choose to keep them.
 
-`zimage_model` accepts either an HF repo (e.g. `black-forest-labs/FLUX.2-klein-4B`) or a
+`klein_model` accepts either an HF repo (e.g. `black-forest-labs/FLUX.2-klein-4B`) or a
 local path to an already-downloaded `diffusers` folder.
 
 ## ESRGAN models
@@ -854,7 +854,7 @@ Every UI setting has a CLI flag and a prefs key:
 | UI / interactive CLI | CLI flag | preferences.json | Default |
 |---|---|---|---|
 | ESRGAN_DIR | `--esrgan-dir` | `esrgan_dir` | `./upscale_models` |
-| Klein model | `--zimage-model` | `zimage_model` | `black-forest-labs/FLUX.2-klein-4B` |
+| Klein model | `--klein-model` | `klein_model` | `black-forest-labs/FLUX.2-klein-4B` |
 | Source image | `-i` (file or glob) | - | - |
 | Batch source folder | `-i` (folder) or `--input-folder` | - | - |
 | ESRGAN model | `-m` / `--model` | `model` | `4x-ClearRealityV1_Soft.safetensors` |
@@ -900,7 +900,7 @@ Full `preferences.json` example:
 ```json
 {
   "esrgan_dir": "C:/path/to/models/ESRGAN",
-  "zimage_model": "black-forest-labs/FLUX.2-klein-4B",
+  "klein_model": "black-forest-labs/FLUX.2-klein-4B",
   "model": "4x-ClearRealityV1_Soft.safetensors",
   "factor": 2.0,
   "denoise": 0.30,

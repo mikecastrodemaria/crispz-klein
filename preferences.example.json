@@ -1,6 +1,6 @@
 {
   "esrgan_dir": "./upscale_models",
-  "zimage_model": "black-forest-labs/FLUX.2-klein-4B",
+  "klein_model": "black-forest-labs/FLUX.2-klein-4B",
   "model": "4x-ClearRealityV1_Soft.safetensors",
   "factor": 2.0,
   "denoise": 0.3,

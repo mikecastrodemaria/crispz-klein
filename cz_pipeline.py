@@ -71,8 +71,39 @@ if DEVICE == "cuda":
 # Modele Z-Image courant. Un repo HF / dossier diffusers -> BASE_REPO. Un fichier
 # single-file (.safetensors Civitai) passe comme "modele" -> transformer override
 # (le VAE et l'encodeur Qwen3 restent tires du repo de base).
-_zmodel = os.environ.get("ZIMAGE_MODEL") or _prefs.get("zimage_model") or DEFAULT_BASE_REPO
-ZIMAGE_TRANSFORMER = os.environ.get("ZIMAGE_TRANSFORMER") or _prefs.get("zimage_transformer") or None
+# Clefs de config/env. Les noms 'zimage_*' sont des vestiges de crispz-studio
+# (Z-Image): dans un fork FLUX.2 ils n'ont plus aucun sens, et un message d'erreur
+# qui dit "set 'zimage_model'" est incomprehensible. Les noms propres sont
+# 'klein_model' / 'klein_transformer' (env KLEIN_MODEL / KLEIN_TRANSFORMER); les
+# anciens restent LUS pour ne casser aucune config existante, et sont signales.
+# NB: les VARIABLES Python gardent leur nom (ZIMAGE_TRANSFORMER...) - cz_ui, cz_cli
+# et cz_protocol les importent, c'est le contrat d'API du module (cf. docstring).
+CFG_MODEL_KEY = "klein_model"
+CFG_TRANSFORMER_KEY = "klein_transformer"
+
+
+def _cfg_first(*keys, env=()):
+    """1re valeur non vide parmi les variables d'env puis les clefs de prefs/config.
+    Journalise quand c'est un ancien nom qui a repondu."""
+    for e in env:
+        v = (os.environ.get(e) or "").strip()
+        if v:
+            return v
+    for i, k in enumerate(keys):
+        v = (_prefs.get(k) or CONFIG.get(k) or "")
+        v = v.strip() if isinstance(v, str) else v
+        if v:
+            if i:
+                _log(f"config: '{k}' is the old crispz-studio name, rename it to "
+                     f"'{keys[0]}' (still read for now)")
+            return v
+    return None
+
+
+_zmodel = _cfg_first(CFG_MODEL_KEY, "zimage_model",
+                     env=("KLEIN_MODEL", "ZIMAGE_MODEL")) or DEFAULT_BASE_REPO
+ZIMAGE_TRANSFORMER = _cfg_first(CFG_TRANSFORMER_KEY, "zimage_transformer",
+                                env=("KLEIN_TRANSFORMER", "ZIMAGE_TRANSFORMER"))
 if _is_single_file(_zmodel):
     ZIMAGE_TRANSFORMER = _zmodel
     BASE_REPO = DEFAULT_BASE_REPO
@@ -668,22 +699,36 @@ def _base_hidden_dim(base=None):
     return dim
 
 
+def _variant_name(dim):
+    """'FLUX.2-klein-4B' / '-9B', ou la dimension brute si la variante est inconnue."""
+    v = _FLUX2_VARIANTS.get(dim)
+    return f"FLUX.2-klein-{v}" if v else f"hidden dim {dim}"
+
+
 def _flux2_variant_mismatch(dim, base=None):
-    """Message actionnable si `dim` ne correspond pas au repo de base, sinon None."""
+    """Raison COURTE si `dim` ne correspond pas au repo de base, sinon None.
+
+    Court volontairement: la raison est repetee une fois par fichier ecarte, et une
+    bibliotheque peut en compter des dizaines. Le mode d'emploi (quelle clef changer,
+    la licence du 9B) est donne UNE fois par listage, par _variant_skip_summary."""
     if not dim:
         return None
     want = _base_hidden_dim(base)
     if not want or dim == want:
         return None
-    got_n = _FLUX2_VARIANTS.get(dim, f"hidden dim {dim}")
-    want_n = _FLUX2_VARIANTS.get(want, f"hidden dim {want}")
-    extra = ""
-    if got_n == "9B":
-        extra = (" NB: FLUX.2-klein-9B is under a NON-COMMERCIAL licence, unlike the "
-                 "4B (Apache-2.0) -- see FORK.md before switching.")
-    return (f"FLUX.2-klein {got_n} transformer, but the configured base is {want_n} "
-            f"({dim} vs {want}); loading it would fail deep in diffusers. Set "
-            f"'zimage_model' to the matching base repo to use this file.{extra}")
+    return f"{_variant_name(dim)}, and this build runs {_variant_name(want)}"
+
+
+def _variant_skip_summary(n, dim, base=None):
+    """Le mode d'emploi, une seule fois pour les n fichiers ecartes."""
+    want = _base_hidden_dim(base)
+    line = (f"{n} checkpoint(s) skipped: they are {_variant_name(dim)} builds and this "
+            f"install runs {_variant_name(want)} ({base or BASE_REPO}). To use them, "
+            f"point '{CFG_MODEL_KEY}' at the matching base repo.")
+    if _FLUX2_VARIANTS.get(dim) == "9B":
+        line += (" Note: FLUX.2-klein-9B is NON-COMMERCIAL, unlike the 4B "
+                 "(Apache-2.0) - see FORK.md.")
+    return line
 
 
 def _safetensors_unsupported(path):
@@ -1193,14 +1238,20 @@ def _checkpoint_dirs():
 
 
 def list_checkpoints():
-    """Modeles Qwen-Image single-file (.safetensors / .gguf) des dossiers checkpoints
+    """Modeles FLUX.2 single-file (.safetensors / .gguf) des dossiers checkpoints
     (principal + extra, fusionnes dans une seule liste). Les FP8/INT8 'scaled' ComfyUI
     sont acceptes (loader dequant, cf. _safetensors_dequant); seuls restent ecartes,
     avec leur raison: LoRA egarees, SVDQuant/Nunchaku INT4, GGUF d'une autre archi ou
-    au layout sd.cpp. En cas de meme nom de fichier, le dossier principal a la
-    priorite."""
+    au layout sd.cpp, et les builds de l'AUTRE variante (4B/9B).
+
+    Les ecarts de VARIANTE sont regroupes: une bibliotheque peut contenir des dizaines
+    de klein-9B, et repeter le mode d'emploi a chaque ligne noie le journal. Une ligne
+    courte par fichier, puis UN resume qui dit quoi faire.
+
+    En cas de meme nom de fichier, le dossier principal a la priorite."""
     out = []
     seen = set()
+    variant_skips = {}          # dim -> nombre de fichiers ecartes
     for d in _checkpoint_dirs():
         if not os.path.isdir(d):
             continue
@@ -1210,12 +1261,23 @@ def list_checkpoints():
             if not f.lower().endswith((".safetensors", ".ckpt", ".pt", ".sft", ".gguf")):
                 continue
             if f.lower().endswith(".safetensors"):
-                reason = _safetensors_unsupported(os.path.join(d, f))
+                fp = os.path.join(d, f)
+                dim = _flux2_hidden_dim(fp)
+                if _flux2_variant_mismatch(dim):
+                    variant_skips[dim] = variant_skips.get(dim, 0) + 1
+                    _dbg(f"checkpoint skipped ({_variant_name(dim)}): {f}")
+                    continue
+                reason = _safetensors_unsupported(fp)
                 if reason:
                     _log(f"checkpoint skipped ({reason}): {f}")
                     continue
             if f.lower().endswith(".gguf"):
                 fp = os.path.join(d, f)
+                dim = _gguf_hidden_dim(fp)
+                if _flux2_variant_mismatch(dim):
+                    variant_skips[dim] = variant_skips.get(dim, 0) + 1
+                    _dbg(f"checkpoint skipped ({_variant_name(dim)}): {f}")
+                    continue
                 lay, a = _gguf_layout(fp), _gguf_arch(fp)
                 # Le LAYOUT prime sur l'archi declaree: les noms de tenseurs sont une
                 # preuve, le KV 'general.architecture' une simple etiquette -- et des
@@ -1236,6 +1298,8 @@ def list_checkpoints():
                     continue
             seen.add(f)
             out.append(f)
+    for dim, n in sorted(variant_skips.items()):
+        _log(_variant_skip_summary(n, dim))
     return sorted(out)
 
 
