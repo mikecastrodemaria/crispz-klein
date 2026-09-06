@@ -162,6 +162,28 @@ chemin, premier poids gagnant) en un seul appel, avec `_APPLIED_LORAS` comme uni
 
 Couvert par `tests/test_lora_dialect.py`.
 
+### C-quater. 4B contre 9B : les distinguer AVANT de charger — *imprévu*
+
+La garde d'architecture ne pouvait rien : **les deux variantes partagent
+l'architecture et les noms de tenseurs**. Un checkpoint 9B chargé dans le pipeline
+4B mourait au fond de diffusers, après des gigaoctets lus, sur
+`expected shape [18432, 3072], but got [24576, 4096]`.
+
+Seule la **dimension cachée** les sépare (3072 / 4096), et elle est lisible à
+l'en-tête : `double_stream_modulation_img` (`.lin.` au layout d'origine, `.linear.`
+au layout diffusers), dont le second axe EST la dimension. La valeur attendue vient
+du repo de base (`attention_head_dim × num_attention_heads`), donc la garde est
+**relative à la base et symétrique** — pointer `zimage_model` sur le 9B fait
+refuser les 4B. Base indéterminable → aucun filtrage (règle maison : ne jamais
+écarter sur un doute). Même contrôle sur le chemin GGUF.
+
+Le refus nomme les deux variantes, les deux dimensions, et l'action ; sur un
+fichier 9B il rappelle en plus que **le 9B est sous licence non commerciale**.
+
+Mesuré sur une bibliothèque réelle de 21 fichiers : 7 chargeables, 12 refusés avec
+raison (dont 10 en 9B et un LoRA mal rangé). Couvert par
+`tests/test_klein_variant.py`.
+
 ### D. `_QWEN_KEY_MARKERS` re-dérivé — *imprévu*
 
 La garde d'architecture du chemin single-file/GGUF cherchait `img_in`, `txt_in`,

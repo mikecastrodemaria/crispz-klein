@@ -7,6 +7,33 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.18.3 — Tell 4B from 9B before loading, not after
+
+A klein-9B checkpoint loaded into the 4B pipeline died deep inside diffusers,
+after reading gigabytes, on an unreadable message: *"expected shape
+[18432, 3072], but got [24576, 4096]"*. The architecture guard could not catch it
+— **4B and 9B share the architecture and the tensor names**; only the hidden
+dimension differs (3072 vs 4096).
+
+It is now read from the **header**, before any weight: the signature is
+`double_stream_modulation_img` (`.lin.` in the original/ComfyUI layout,
+`.linear.` in the diffusers one), whose second axis IS the hidden dim. The
+expected value comes from the configured base repo
+(`attention_head_dim * num_attention_heads`), so the guard is **base-relative and
+symmetric**: point `zimage_model` at the 9B repo and it is the 4B files that get
+refused. A base whose dimension cannot be determined filters nothing — the house
+rule is to never discard a model on a doubt.
+
+The refusal names both variants, the two dimensions, and what to do about it. On
+a 9B file it also flags that **klein-9B is under a non-commercial licence**,
+unlike the 4B.
+
+Same check on the GGUF path (`_gguf_hidden_dim`), where a 9B quant hit exactly
+the same wall.
+
+Measured on a real 21-file library: 7 loadable, 12 refused with a reason (10 of
+them 9B, one a misfiled LoRA), instead of one long load ending in a stack trace.
+
 ## 1.18.2 — First edit LoRA in the catalogue, and two traps it exposed
 
 `Consistence-Edit` ([lrzjason/Consistance_Edit_Lora](https://huggingface.co/lrzjason/Consistance_Edit_Lora),

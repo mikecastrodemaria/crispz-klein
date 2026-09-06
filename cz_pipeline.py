@@ -599,6 +599,93 @@ def _safetensors_header(path):
         return json.loads(f.read(min(n, 10_000_000)).decode("utf-8", "ignore"))
 
 
+# --- Variante FLUX.2: 4B ou 9B ? -------------------------------------------------
+# Les deux partagent l'architecture ET les noms de tenseurs: la garde d'archi les laisse
+# passer toutes les deux. Seule la DIMENSION CACHEE les separe, et un 9B charge dans un
+# pipeline 4B explose apres avoir lu des Go, sur un message diffusers illisible
+# ("expected shape [18432, 3072], but got [24576, 4096]"). On tranche a l'en-tete.
+# La cle porte '.lin.' au layout original (ComfyUI) et '.linear.' au layout diffusers.
+# Chaque signature vient avec son RATIO structurel out/in, qui vaut pour les deux
+# variantes: double_stream 18432/3072 == 24576/4096 == 6, single_stream 9216/3072 ==
+# 12288/4096 == 3. Exiger ce ratio evite de prendre n'importe quel tenseur portant le
+# bon nom (fixture de test, fichier tronque) pour une dimension cachee.
+_FLUX2_DIM_SIGS = (("double_stream_modulation_img.lin.weight", 6),
+                   ("double_stream_modulation_img.linear.weight", 6),
+                   ("double_stream_modulation_txt.lin.weight", 6),
+                   ("single_stream_modulation.lin.weight", 3),
+                   ("single_stream_modulation.linear.weight", 3))
+_FLUX2_VARIANTS = {3072: "4B", 4096: "9B"}
+_BASE_DIM_CACHE = {}
+
+
+def _flux2_hidden_dim_from_shapes(items):
+    """Dimension cachee depuis des (nom, shape). None si aucune signature reconnue."""
+    for name, shape in items:
+        for sig, ratio in _FLUX2_DIM_SIGS:
+            if not name.endswith(sig) or shape is None or len(shape) != 2:
+                continue
+            out, dim = int(shape[0]), int(shape[1])
+            if dim > 0 and out == dim * ratio:
+                return dim
+    return None
+
+
+def _flux2_hidden_dim(path):
+    """Dimension cachee d'un transformer FLUX.2 single-file, lue a l'EN-TETE seule."""
+    try:
+        hdr = _safetensors_header(path)
+    except Exception:
+        return None
+    return _flux2_hidden_dim_from_shapes(
+        (k, v.get("shape")) for k, v in hdr.items() if k != "__metadata__")
+
+
+def _base_hidden_dim(base=None):
+    """Dimension attendue par le repo de base courant, lue dans transformer/config.json
+    (hidden = attention_head_dim * num_attention_heads). None si indeterminable -- dans
+    ce cas on ne filtre pas: mieux vaut tenter que d'ecarter un modele valide."""
+    base = (base or BASE_REPO or "").strip()
+    if not base:
+        return None
+    if base in _BASE_DIM_CACHE:
+        return _BASE_DIM_CACHE[base]
+    dim = None
+    try:
+        cfg = os.path.join(base, "transformer", "config.json")
+        if not os.path.isfile(cfg):
+            from huggingface_hub import hf_hub_download
+            try:
+                cfg = hf_hub_download(base, "transformer/config.json", local_files_only=True)
+            except Exception:
+                cfg = hf_hub_download(base, "transformer/config.json")
+        d = json.load(open(cfg, encoding="utf-8"))
+        hd, nh = d.get("attention_head_dim"), d.get("num_attention_heads")
+        if hd and nh:
+            dim = int(hd) * int(nh)
+    except Exception as e:
+        _dbg(f"base hidden dim unknown for {base}: {e}")
+    _BASE_DIM_CACHE[base] = dim
+    return dim
+
+
+def _flux2_variant_mismatch(dim, base=None):
+    """Message actionnable si `dim` ne correspond pas au repo de base, sinon None."""
+    if not dim:
+        return None
+    want = _base_hidden_dim(base)
+    if not want or dim == want:
+        return None
+    got_n = _FLUX2_VARIANTS.get(dim, f"hidden dim {dim}")
+    want_n = _FLUX2_VARIANTS.get(want, f"hidden dim {want}")
+    extra = ""
+    if got_n == "9B":
+        extra = (" NB: FLUX.2-klein-9B is under a NON-COMMERCIAL licence, unlike the "
+                 "4B (Apache-2.0) -- see FORK.md before switching.")
+    return (f"FLUX.2-klein {got_n} transformer, but the configured base is {want_n} "
+            f"({dim} vs {want}); loading it would fail deep in diffusers. Set "
+            f"'zimage_model' to the matching base repo to use this file.{extra}")
+
+
 def _safetensors_unsupported(path):
     """Renvoie une raison (str) si le .safetensors n'est PAS chargeable, sinon None.
     Lit juste l'en-tete (rapide). Deux cas restent non supportes:
@@ -607,6 +694,9 @@ def _safetensors_unsupported(path):
         qui exigent le runtime nunchaku (kernels dedies), pas dequantifiables ici.
     Les FP8 / INT8 'scaled' facon ComfyUI ne sont PLUS rejetes: ils passent par le
     loader dequant (_safetensors_dequant + _load_dequant_state_dict)."""
+    bad = _flux2_variant_mismatch(_flux2_hidden_dim(path))
+    if bad:
+        return bad
     try:
         hdr = _safetensors_header(path)
         has_qweight = False
@@ -1067,9 +1157,25 @@ def _gguf_layout(path):
         return "unknown"
 
 
+def _gguf_hidden_dim(path):
+    """Dimension cachee d'un .gguf FLUX.2 (meme signature que le single-file)."""
+    try:
+        from gguf import GGUFReader
+        # shape gguf = ordre inverse de torch -> on remet (out, in)
+        return _flux2_hidden_dim_from_shapes(
+            (t.name, list(reversed([int(x) for x in t.shape]))) for t in GGUFReader(path).tensors)
+    except Exception as e:
+        _dbg(f"gguf hidden dim read failed {path}: {e}")
+        return None
+
+
 def _gguf_layout_unsupported(path):
-    """Renvoie une raison (str) si le .gguf n'utilise PAS le layout de tenseurs FLUX.2
-    attendu par diffusers, sinon None. Lecture d'en-tete seule."""
+    """Renvoie une raison (str) si le .gguf n'est PAS chargeable: layout de tenseurs
+    inconnu de diffusers, ou variante FLUX.2 (4B/9B) qui ne correspond pas au repo de
+    base. Lecture d'en-tete seule."""
+    bad = _flux2_variant_mismatch(_gguf_hidden_dim(path))
+    if bad:
+        return bad
     if _gguf_layout(path) != "foreign":
         return None
     return ("GGUF with a non-standard tensor layout (e.g. stable-diffusion.cpp "
