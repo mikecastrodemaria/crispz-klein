@@ -580,7 +580,17 @@ selection rather than at the next restart.
 `flux-2-klein-9b.safetensors` at the root, the single-file build, which
 `from_pretrained` does not fetch.
 
-**A local 9B `.safetensors` does not spare you any of this.** A single-file
+**Making the 9B usable on a 32 GB card.** Measured on an RTX 5090 (31.8 GB), ~1 Mpx,
+4 steps: the full bf16 base — transformer 18.2 GB + Qwen3 8B encoder 16.4 GB — does not
+fit, so the offload is forced to `model` and every image pays the weight transfer:
+**50 s**. A **GGUF** 9B build as the transformer override stays quantized in VRAM
+(Q8_0, ~9 GB instead of 18) and brings the same render down to **10.9 s**.
+
+`.safetensors` fp8/int8 builds do **not** help here: they are the ComfyUI "scaled"
+format, and the loader dequantizes them to bf16 — 8.8 GB on disk, ~18 GB in VRAM again.
+They save disk, not memory. Only GGUF stays quantized at run time.
+
+**A local 9B `.safetensors` does not spare you the gated repo either.** A single-file
 checkpoint only replaces the *transformer*; the VAE, the text encoder and the
 architecture config still come from the gated base repo. An fp8 or GGUF 9B build
 saves VRAM, not the licence.
