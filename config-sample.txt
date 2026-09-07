@@ -215,5 +215,6 @@
     "_default_negative_prompt_help": "Inert on klein (distilled, no CFG). Kept empty on purpose.",
     "_omni_help": "klein needs NO separate edit model: multi-reference editing (up to 4 refs) is served by the base pipeline itself. The keys 'zimage_omni_model' / 'zimage_omni_base' of crispz-qwen-edit are gone on purpose - do not re-add them at merge time.",
     "klein_model": "black-forest-labs/FLUX.2-klein-4B",
-    "_klein_model_help": "Base repo (HF) or a local diffusers folder / single-file checkpoint. Apache 2.0. Do NOT switch to FLUX.2-klein-9B: non-commercial licence, see FORK.md."
+    "_klein_model_help": "Base repo (HF) or a local diffusers folder / single-file checkpoint. Default black-forest-labs/FLUX.2-klein-4B, Apache 2.0. The UI writes your dropdown choice back here. FLUX.2-klein-9B also works but is NON-COMMERCIAL, gated on HF (accept the licence + set hf_token) and needs ~29 GB of VRAM - see FORK.md.",
+    "_klein_base_repos_help": "Base repos offered in the 'Klein checkpoint' dropdown. Default [\"black-forest-labs/FLUX.2-klein-4B\", \"black-forest-labs/FLUX.2-klein-9B\"]. Set it to the 4B alone to never be offered the non-commercial 9B."
 }

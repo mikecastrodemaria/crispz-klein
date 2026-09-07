@@ -694,7 +694,13 @@ def _base_hidden_dim(base=None):
         if hd and nh:
             dim = int(hd) * int(nh)
     except Exception as e:
-        _dbg(f"base hidden dim unknown for {base}: {e}")
+        # Degradation annoncee: sans la dimension du repo de base, le tri 4B/9B des
+        # checkpoints est DESACTIVE (regle maison: on n'ecarte jamais sur un doute).
+        # Cause la plus frequente sur le 9B: repo gated, licence non acceptee ou token
+        # absent -> la config du transformer n'est meme pas lisible.
+        _log(f"cannot read {base}'s transformer config ({type(e).__name__}: {e}) -> the "
+             f"4B/9B checkpoint filter is OFF for this base: every single-file "
+             f"checkpoint is listed, and a wrong-variant one will fail at load time.")
     _BASE_DIM_CACHE[base] = dim
     return dim
 
@@ -2054,6 +2060,24 @@ def _swap_transformer(pipe):
         return False
 
 
+def _hf_access_hint(repo, err):
+    """Message actionnable si le Hub a REFUSE l'acces au repo, sinon None (l'erreur
+    d'origine remonte telle quelle).
+
+    Le 4B est public; le 9B est gated (licence non commerciale a accepter). Sans ce
+    message, un repo gated ressort en HTTPError 401/403 au milieu d'une trace
+    huggingface_hub, et rien ne dit qu'il manque juste une case a cocher + un token."""
+    s = f"{type(err).__name__}: {err}"
+    if not any(k in s for k in ("Gated", "gated", "401", "403", "restricted",
+                                "awaiting a review", "Access to model")):
+        return None
+    tok = ("A read token IS set." if cz_core.hf_token_is_set()
+           else "No Hugging Face token is set right now (config 'hf_token').")
+    return (f"Hugging Face refused access to {repo}. That repo is gated: accept its "
+            f"licence at https://huggingface.co/{repo} with your account, then set a "
+            f"READ token. {tok} Original error -- {s}")
+
+
 def _ensure_base():
     """Charge (si besoin) le pipeline de base txt2img. Gere le transformer
     single-file/GGUF et l'offload. Cache par (repo, transformer, offload).
@@ -2086,10 +2110,16 @@ def _ensure_base():
     if ZIMAGE_TRANSFORMER:
         kwargs["transformer"] = _load_transformer()
     _log(f"loading FLUX.2 Klein base: {BASE_REPO} (offload={OFFLOAD_MODE}, dtype=bf16) ... "
-         "first time downloads from HF (~15 Go), then cached")
-    pipe = _load_monitor(f"FLUX.2 Klein base {BASE_REPO}",  # noqa: E128
-                         lambda: Flux2KleinPipeline.from_pretrained(BASE_REPO, torch_dtype=DTYPE,
-                                                                    **kwargs))
+         "first time downloads from HF (~15 Go for the 4B), then cached")
+    try:
+        pipe = _load_monitor(f"FLUX.2 Klein base {BASE_REPO}",  # noqa: E128
+                             lambda: Flux2KleinPipeline.from_pretrained(BASE_REPO, torch_dtype=DTYPE,
+                                                                        **kwargs))
+    except Exception as e:
+        hint = _hf_access_hint(BASE_REPO, e)
+        if hint:
+            raise RuntimeError(hint) from e
+        raise
     # Capture le config natif (flow-matching) du scheduler -> base pour construire les
     # autres samplers (euler/dpm2a/dpmpp2m) sans perdre shift/flow params.
     try:

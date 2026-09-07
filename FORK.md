@@ -184,6 +184,40 @@ Mesuré sur une bibliothèque réelle de 21 fichiers : 7 chargeables, 12 refusé
 raison (dont 10 en 9B et un LoRA mal rangé). Couvert par
 `tests/test_klein_variant.py`.
 
+### C-quinquies. Choisir 4B **ou** 9B, et le piège des presets — *imprévu*
+
+La garde ci-dessus est relative au repo de base, donc changer de variante ne demandait
+qu'à pointer `klein_model` ailleurs — à la main, dans `preferences.json`, sans que le
+dropdown ne l'offre. `ZIMAGE_BASE_REPOS` ne contenait que le 4B : sur un install
+pointé vers le 9B, le dropdown affichait le 4B pendant que le pipeline tournait sur le
+9B, et le sélectionner ramenait au 4B **en silence**.
+
+Les deux repos officiels sont maintenant proposés. Choisir un repo de base :
+
+- recharge **tout** (transformer + VAE + encodeur Qwen3), contrairement à un
+  single-file qui n'échange que le transformer ;
+- **reconstruit la liste des checkpoints** — un 9B ne charge pas dans un pipeline 4B,
+  la liste doit suivre — et crée les presets manquants ;
+- **persiste le choix** (`klein_model` dans `preferences.json`) : « selon le projet »
+  se compte en sessions, pas en runs ;
+- annonce, pour le 9B, la licence non commerciale, le dépôt *gated* et les ~29 Go de
+  VRAM **avant** le premier run, et traduit un 401/403 du Hub en consigne.
+
+**Le piège, lui, était ailleurs.** Les presets sont auto-créés par modèle local : une
+bibliothèque 9B sur un install 4B en laisse une pile qui nomment des checkpoints que
+`list_checkpoints()` écarte désormais (12 sur 20 sur la machine de test). Au *Load*,
+cz_ui poussait ce nom dans le dropdown ; le frontend Gradio refuse une valeur hors
+`choices`, et le `.then()` qui applique le modèle relisait donc l'**ancienne** valeur.
+Prompt, taille, steps, sampler et LoRA s'appliquaient — le modèle seul, non. Vu de
+l'utilisateur : « je change de modèle, c'est toujours le modèle par défaut ».
+
+Un preset ne pousse plus un checkpoint absent des choix : il applique le reste et dit
+lequel il voulait, pourquoi il ne charge pas, et lequel reste actif. Une ligne au
+démarrage compte les presets concernés. Et `_apply_checkpoint`, qui acceptait un 9B
+sans broncher pour mourir au run suivant, le refuse maintenant à la sélection.
+
+Couvert par `tests/test_preset_model_switch.py`.
+
 ### D. `_QWEN_KEY_MARKERS` re-dérivé — *imprévu*
 
 La garde d'architecture du chemin single-file/GGUF cherchait `img_in`, `txt_in`,
@@ -327,9 +361,16 @@ Smoke test du protocole :
 chiffre d'affaires, pas de filtrage de contenu imposé, pas de révocation. C'est la
 licence la plus permissive de toute la lignée crispz — l'inverse exact de crispz-krea2.
 
-⚠️ **Ne pas confondre avec `FLUX.2-klein-9B`**, sous licence **non commerciale** et
-imposant des filtres de contenu. Ce fork cible le **4B** ; ne pas basculer
-`DEFAULT_BASE_REPO` sur le 9B sans revoir `LICENSE.txt` et `NOTICE`.
+⚠️ **`FLUX.2-klein-9B` est une autre licence.** Non commerciale, filtres de contenu,
+et dépôt *gated* sur Hugging Face. Il est **proposé dans le dropdown** depuis la
+1.19.0 — un projet peut le vouloir — mais le sélectionner affiche la licence, l'accès
+gated et les ~29 Go de VRAM avant le premier run, et l'échec d'accès du Hub est
+traduit en consigne (accepter la licence, poser un token).
+
+`DEFAULT_BASE_REPO` reste le **4B** : c'est lui que décrivent `LICENSE.txt` et
+`NOTICE`, et le fork ne redistribue aucun poids. Choisir le 9B engage l'utilisateur,
+pas le dépôt. Pour ne jamais le voir offert : `"klein_base_repos": [...]` dans
+`config.txt`.
 
 ## État
 

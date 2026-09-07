@@ -36,17 +36,21 @@ def _ckpt(name, dim):
 
 
 def _with_lib(fn, base_dim=3072):
-    """Execute fn avec TMP comme dossier de checkpoints et un repo de base 4B."""
+    """Execute fn avec TMP comme dossier de checkpoints ET de presets, sur un repo de
+    base 4B. Le dossier presets/ de l'install ne doit rien voir de ces fixtures:
+    _apply_checkpoint et _refresh_checkpoints creent des presets par modele local."""
     old = (P.CHECKPOINTS_DIR, P.CHECKPOINTS_EXTRA_DIR, P.BASE_REPO,
-           P.ZIMAGE_TRANSFORMER, dict(P._BASE_DIM_CACHE))
+           P.ZIMAGE_TRANSFORMER, dict(P._BASE_DIM_CACHE), U._PRESETS_DIR)
     P.CHECKPOINTS_DIR, P.CHECKPOINTS_EXTRA_DIR = TMP, ""
     P.BASE_REPO = "base-4b"
     P._BASE_DIM_CACHE["base-4b"] = base_dim
+    U._PRESETS_DIR = os.path.join(TMP, "presets")
+    os.makedirs(U._PRESETS_DIR, exist_ok=True)
     try:
         return fn()
     finally:
         (P.CHECKPOINTS_DIR, P.CHECKPOINTS_EXTRA_DIR, P.BASE_REPO,
-         P.ZIMAGE_TRANSFORMER, cache) = old
+         P.ZIMAGE_TRANSFORMER, cache, U._PRESETS_DIR) = old
         P._BASE_DIM_CACHE.clear()
         P._BASE_DIM_CACHE.update(cache)
 
@@ -111,10 +115,10 @@ def _ckpt_update(outs):
 def test_preset_never_pushes_a_checkpoint_the_dropdown_refuses():
     _ckpt("good4b.safetensors", 3072)
     _ckpt("big9b.safetensors", 4096)
-    ok_file = _preset("zz-test-ok", "good4b.safetensors")
-    bad_file = _preset("zz-test-bad", "big9b.safetensors")
 
     def check():
+        _preset("zz-test-ok", "good4b.safetensors")
+        _preset("zz-test-bad", "big9b.safetensors")
         P.ZIMAGE_TRANSFORMER = P.resolve_checkpoint("good4b.safetensors")
 
         outs = U._ui_preset_load("zz-test-ok")
@@ -133,19 +137,75 @@ def test_preset_never_pushes_a_checkpoint_the_dropdown_refuses():
         assert "good4b" in status, f"doit dire quel modele reste actif: {status}"
         assert outs[U._PRESET_KEYS.index("steps")].get("value") == 7, \
             "le reste du preset doit s'appliquer quand meme"
-    try:
-        _with_lib(check)
-    finally:
-        for f in (ok_file, bad_file):
-            try:
-                os.remove(f)
-            except OSError:
-                pass
+    _with_lib(check)
     print("OK test_preset_never_pushes_a_checkpoint_the_dropdown_refuses")
+
+
+def test_both_base_repos_are_selectable_and_the_9b_is_announced():
+    """4B et 9B se choisissent au dropdown. Le 4B reste le defaut; le 9B doit dire
+    ce qu'il coute AVANT le run: licence non commerciale, repo gated, VRAM."""
+    assert U.KLEIN_BASE_4B in U.ZIMAGE_BASE_REPOS
+    assert U.KLEIN_BASE_9B in U.ZIMAGE_BASE_REPOS
+    assert P.DEFAULT_BASE_REPO == U.KLEIN_BASE_4B, "le defaut doit rester le 4B"
+    note = U.BASE_REPO_NOTES[U.KLEIN_BASE_9B]
+    assert "Non-Commercial" in note and "gated" in note and "VRAM" in note, note
+    print("OK test_both_base_repos_are_selectable_and_the_9b_is_announced")
+
+
+def test_base_swap_refreshes_the_checkpoint_list():
+    """4B et 9B n'acceptent pas les memes fichiers: choisir un repo de base doit
+    reconstruire la liste, sinon le dropdown propose des modeles impossibles."""
+    _ckpt("good4b.safetensors", 3072)
+    _ckpt("big9b.safetensors", 4096)
+    saved = {}
+
+    def check():
+        # aucune ecriture dans le vrai preferences.json pendant un test
+        real_save, U._save_prefs_keys = U._save_prefs_keys, saved.update
+        # la dimension des deux repos est pre-calee: aucun acces reseau ici
+        P._BASE_DIM_CACHE[U.KLEIN_BASE_4B] = 3072
+        P._BASE_DIM_CACHE[U.KLEIN_BASE_9B] = 4096
+        try:
+            P.BASE_REPO = U.KLEIN_BASE_4B
+            P.ZIMAGE_TRANSFORMER = P.resolve_checkpoint("good4b.safetensors")
+            out = U._apply_checkpoint(U.KLEIN_BASE_9B)
+            assert P.BASE_REPO == U.KLEIN_BASE_9B, P.BASE_REPO
+            assert not P.ZIMAGE_TRANSFORMER, \
+                "un repo de base complet doit effacer l'override single-file"
+            status, choices = out[0], out[4].get("choices")
+            assert "Non-Commercial" in status and "gated" in status, status
+            assert choices and "big9b.safetensors" in choices, choices
+            assert "good4b.safetensors" not in choices, \
+                f"un checkpoint 4B ne charge pas dans un pipeline 9B: {choices}"
+            assert saved.get(P.CFG_MODEL_KEY) == U.KLEIN_BASE_9B, saved
+
+            # et retour au 4B: la liste doit s'inverser
+            out = U._apply_checkpoint(U.KLEIN_BASE_4B)
+            choices = out[4].get("choices")
+            assert "good4b.safetensors" in choices and "big9b.safetensors" not in choices, choices
+            assert "Non-Commercial" not in out[0], out[0]
+        finally:
+            U._save_prefs_keys = real_save
+    _with_lib(check)
+    print("OK test_base_swap_refreshes_the_checkpoint_list")
+
+
+def test_gated_repo_error_says_what_to_do():
+    """Un 401/403 du Hub sur le 9B doit devenir une consigne, pas une trace."""
+    hint = P._hf_access_hint(U.KLEIN_BASE_9B,
+                             RuntimeError("401 Client Error: Access to model ... is restricted"))
+    assert hint and U.KLEIN_BASE_9B in hint, hint
+    assert "accept its licence" in hint and "token" in hint, hint
+    # une panne ordinaire ne doit PAS etre maquillee en probleme de licence
+    assert P._hf_access_hint(U.KLEIN_BASE_9B, OSError("disk full")) is None
+    print("OK test_gated_repo_error_says_what_to_do")
 
 
 if __name__ == "__main__":
     test_refusal_names_the_reason_and_the_fix()
     test_apply_checkpoint_refuses_the_wrong_variant()
     test_preset_never_pushes_a_checkpoint_the_dropdown_refuses()
+    test_both_base_repos_are_selectable_and_the_9b_is_announced()
+    test_base_swap_refreshes_the_checkpoint_list()
+    test_gated_repo_error_says_what_to_do()
     print("ALL OK")

@@ -40,8 +40,11 @@ edit-LoRA catalogue holds exactly one verified preset (`Consistence-Edit`): the
 Qwen-Image-Edit presets of the upstream fork are incompatible with FLUX.2. Both are announced honestly in the CLI protocol
 (`supports.negative: false`, `edit_loras: []`). Full detail in [FORK.md](FORK.md).
 
-> ⚠️ Do **not** point this at `FLUX.2-klein-9B`: non-commercial licence. This fork
-> targets the **4B**, which is Apache 2.0.
+> ⚠️ **4B by default, 9B on request.** `FLUX.2-klein-4B` is Apache 2.0 and is what
+> this fork ships with. `FLUX.2-klein-9B` is offered in the same dropdown, but it is
+> under the **FLUX Non-Commercial License**, is **gated** on Hugging Face (accept the
+> licence, then set `hf_token`) and needs **~29 GB of VRAM**. Picking it says all of
+> that before the first run.
 
 On top of crispz's upscaler it adds:
 
@@ -513,12 +516,23 @@ What each choice does:
 
 | You pick… | Effect | Performance preset (auto) |
 |---|---|---|
-| **black-forest-labs/FLUX.2-klein-4B** | full base repo (Apache 2.0, distilled) | **Turbo (4 steps)** |
+| **black-forest-labs/FLUX.2-klein-4B** | full base repo, the default (Apache 2.0, distilled) | from the model profile |
+| **black-forest-labs/FLUX.2-klein-9B** | full base repo — bigger, **non-commercial**, gated, ~29 GB VRAM | from the model profile |
 | a local `.safetensors` | used as the **transformer** (VAE + Qwen3 encoder kept from the current base repo) | from the model profile |
 
-> The **9B** variant is deliberately absent from the dropdown: it is under a
-> **non-commercial** licence and requires content filtering. This fork targets the
-> 4B, which is Apache 2.0.
+Picking a **base repo** swaps everything — transformer, VAE and Qwen3 text encoder —
+so it also changes which single-file checkpoints can load: a 9B build does not fit a
+4B pipeline and vice versa. The dropdown is rebuilt on the spot, the missing model
+presets are created, and the choice is written to `preferences.json` so the next
+launch starts on it. A checkpoint the list refuses is **refused on selection**, with
+the reason, instead of failing mid-run on `expected shape [18432, 3072], but got
+[24576, 4096]`.
+
+> The **9B** is under the **FLUX Non-Commercial License** (the 4B is Apache 2.0) and
+> its repo is **gated**: accept the licence on its Hugging Face page with your
+> account, then set a READ token (`hf_token` in `config.txt`). Without that, the load
+> fails with a message saying exactly this. Restrict the dropdown with the config key
+> `klein_base_repos` if you never want the 9B offered.
 
 Switching the dropdown automatically syncs **steps, guidance and the Performance
 radio**. The change is applied on the next **Generate**.

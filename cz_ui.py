@@ -542,9 +542,31 @@ def _refresh_models(new_dir):
 
 
 # Repos de base officiels FLUX.2 Klein, proposes directement dans le dropdown
-# "Klein checkpoint" (selectionner = swap complet du BASE_REPO).
-# NB: le 9B est volontairement ABSENT -- licence non commerciale (cf. FORK.md).
-ZIMAGE_BASE_REPOS = ["black-forest-labs/FLUX.2-klein-4B"]
+# "Klein checkpoint": choisir un repo de base = swap COMPLET (transformer + VAE +
+# encodeur Qwen3), contrairement a un checkpoint single-file qui n'echange que le
+# transformer. Les deux variantes officielles sont offertes -- le 4B reste le defaut
+# (c'est lui que DEFAULT_BASE_REPO pointe), le 9B se choisit quand un projet le vaut.
+# Surchargeable par config `klein_base_repos`.
+KLEIN_BASE_4B = "black-forest-labs/FLUX.2-klein-4B"
+KLEIN_BASE_9B = "black-forest-labs/FLUX.2-klein-9B"
+ZIMAGE_BASE_REPOS = [r for r in (CONFIG.get("klein_base_repos")
+                                 or [KLEIN_BASE_4B, KLEIN_BASE_9B])
+                     if isinstance(r, str) and r.strip()]
+# Un repo de base venu de la config/prefs doit rester selectionnable meme absent de la
+# liste: sinon le dropdown affiche un modele et le pipeline en utilise un autre (et le
+# choisir ramenerait en silence au 4B).
+if cz_pipeline.BASE_REPO and cz_pipeline.BASE_REPO not in ZIMAGE_BASE_REPOS:
+    ZIMAGE_BASE_REPOS.append(cz_pipeline.BASE_REPO)
+
+# Ce qu'il faut savoir AVANT de lancer un run sur un repo de base, pas apres 20 Go de
+# telechargement: licence, acces, VRAM. Affiche a la selection.
+BASE_REPO_NOTES = {
+    KLEIN_BASE_9B: (
+        f"⚠ **FLUX Non-Commercial License** (the 4B is Apache-2.0), and the repo is "
+        f"**gated**: accept the licence at https://huggingface.co/{KLEIN_BASE_9B} "
+        f"with your HF account, then set a READ token (config `hf_token`). It also "
+        f"needs ~29 GB of VRAM — below that, set CPU offload to `model`."),
+}
 # Preset Performance par defaut pour chaque repo de base officiel: Turbo (distille,
 # guidance 0) vs Base (a besoin d'une vraie CFG + plus de steps). Le nom du repo de base
 # ("...klein-4B") ne contient pas "base", donc on mappe explicitement plutot que par
@@ -602,9 +624,14 @@ def _current_model_label():
 def _apply_checkpoint(name):
     """Selectionne soit un repo de base officiel FLUX.2 Klein (swap complet du BASE_REPO),
     soit un checkpoint single-file local (transformer override, VAE/encoder du base repo).
-    Ajuste aussi steps/guidance ET le preset Performance selon le profil du modele."""
+    Ajuste aussi steps/guidance ET le preset Performance selon le profil du modele.
+
+    Sorties: (statut, steps, guidance, performance, ckpt_dd, preset_dd). Les deux
+    dernieres ne bougent QUE sur un changement de repo de base: 4B et 9B n'acceptent
+    pas les memes checkpoints single-file, la liste doit suivre le repo choisi."""
+    _noop = (gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update())
     if not name:
-        return (gr.update(), gr.update(), gr.update(), gr.update())
+        return _noop
     if name in ZIMAGE_BASE_REPOS:
         # Repo de base complet -> on enleve tout transformer single-file puis on swap le base.
         set_zimage_transformer("")
@@ -616,22 +643,41 @@ def _apply_checkpoint(name):
         else:
             st, g = profile_for_model(name)
             perf_upd = _perf_update(st, g)
-        return (f"Klein base: {name} -> {perf or 'auto'} (steps={st}, CFG={g}, reload on next run).",
-                gr.update(value=st), gr.update(value=g), perf_upd)
+        # La variante a change: la liste des checkpoints single-file chargeables aussi
+        # (un 9B ne charge pas dans un pipeline 4B, et reciproquement). On relit, on
+        # cree les presets manquants, et on rafraichit les deux menus.
+        cks = list_checkpoints()
+        _ensure_model_presets(cks)
+        # Le choix survit au redemarrage: "en fonction des projets" veut dire d'une
+        # session a l'autre, pas seulement d'un run a l'autre.
+        saved = ""
+        try:
+            _save_prefs_keys({cz_pipeline.CFG_MODEL_KEY: cz_pipeline.BASE_REPO})
+            saved = " Saved as the startup model."
+        except Exception as e:
+            saved = f" (could not persist the choice: {e})"
+        note = BASE_REPO_NOTES.get(name)
+        return (f"Klein base: **{name}** -> {perf or 'auto'} (steps={st}, CFG={g}, full "
+                f"reload on next run — transformer, VAE and text encoder all change). "
+                f"{len(cks)} single-file checkpoint(s) fit this base.{saved}"
+                + (f"\n\n{note}" if note else ""),
+                gr.update(value=st), gr.update(value=g), perf_upd,
+                gr.update(choices=ZIMAGE_BASE_REPOS + cks, value=name),
+                gr.update(choices=list_presets()))
     # Un checkpoint que le listage ecarte (mauvaise variante 4B/9B, LoRA egaree, GGUF
     # d'une autre archi) ne doit PAS devenir le transformer courant: il chargerait des
     # Go avant de mourir sur un message diffusers illisible. On refuse et on dit pourquoi.
     why = checkpoint_refusal(name)
     if why:
         return (f"⚠ **{name} was NOT applied** — {why} Still using "
-                f"`{_current_model_label()}`.",
-                gr.update(), gr.update(), gr.update())
+                f"`{_current_model_label()}`.", *_noop[1:])
     path = resolve_checkpoint(name)
     set_zimage_transformer(path)
     st, g = profile_for_model(os.path.basename(path))
     return (f"Klein transformer: {os.path.basename(path)} -> auto steps={st}, CFG={g} "
             f"(transformer swap on next run — VAE + text encoder stay loaded).",
-            gr.update(value=st), gr.update(value=g), _perf_update(st, g))
+            gr.update(value=st), gr.update(value=g), _perf_update(st, g),
+            gr.update(), gr.update())
 
 
 def _ui_civitai_reco(name, progress=gr.Progress()):
@@ -690,7 +736,7 @@ def _apply_transformer_repo(repo):
     Ajuste steps/guidance ET le preset Performance selon le profil du modele.
     Champ VIDE = no-op: on ne remet PAS a zero (sinon ce bouton effacerait le checkpoint
     choisi juste au-dessus). Pour revenir au base repo pur, choisir un repo officiel dans
-    'Qwen checkpoint'."""
+    'Klein checkpoint'."""
     repo = (repo or "").strip()
     if not repo:
         return ("Transformer override is empty — no change. Pick a model in 'Qwen "
@@ -3705,7 +3751,7 @@ def build_ui():
                                 value=cz_pipeline.CHECKPOINTS_EXTRA_DIR,
                                 label="Extra checkpoints folder (optional)",
                                 placeholder="e.g. D:\\models\\Qwen",
-                                info="Merged into the single 'Qwen checkpoint' list above. Leave empty to disable.")
+                                info="Merged into the single 'Klein checkpoint' list above. Leave empty to disable.")
                             esrgan_dir_tb = gr.Textbox(value=cz_esrgan.ESRGAN_DIR,
                                                        label="ESRGAN_DIR (.pth/.safetensors folder)")
                             with gr.Row():
@@ -3716,7 +3762,7 @@ def build_ui():
                                 _ckpt_choices = ZIMAGE_BASE_REPOS + list_checkpoints()
                                 _ckpt_value = cz_pipeline.BASE_REPO if cz_pipeline.BASE_REPO in _ckpt_choices else ZIMAGE_BASE_REPOS[0]
                                 ckpt_dd = gr.Dropdown(choices=_ckpt_choices,
-                                                      value=_ckpt_value, label="Qwen checkpoint", scale=3)
+                                                      value=_ckpt_value, label="Klein checkpoint", scale=3)
                                 with gr.Row():      # boutons SOUS le dropdown (pleine largeur au-dessus)
                                     ckpt_open_btn = gr.Button("\U0001F5BC️ Browse", size="sm", scale=1,
                                                               elem_id="cz_ckpt_open")
@@ -4008,7 +4054,11 @@ def build_ui():
                               [wild_dd, wild_status, wild_new_name])
         ckpt_refresh_btn.click(_refresh_checkpoints, [ckpt_dir_tb, ckpt_extra_dir_tb],
                                [ckpt_dd, ckpt_status, preset_dd])
-        ckpt_dd.change(_apply_checkpoint, [ckpt_dd], [ckpt_status, gen_steps, guidance, performance])
+        # ckpt_dd est aussi une SORTIE: choisir un repo de base change la liste des
+        # checkpoints single-file compatibles. La valeur renvoyee est celle qui vient
+        # d'etre choisie -> pas de nouveau .change, pas de boucle.
+        ckpt_dd.change(_apply_checkpoint, [ckpt_dd],
+                       [ckpt_status, gen_steps, guidance, performance, ckpt_dd, preset_dd])
         # Reglages communautaires CivitAI -> steps/CFG/sampler/schedule (les updates
         # programmatiques ne declenchent pas .change, d'ou les .then explicites).
         civitai_reco_btn.click(_ui_civitai_reco, [ckpt_dd],

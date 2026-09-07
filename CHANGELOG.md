@@ -7,6 +7,40 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.19.0 — Pick 4B or 9B from the dropdown, per project
+
+The 4B/9B guard was already relative to the base repo, so switching variants only
+ever needed `klein_model` to point elsewhere — by hand, in `preferences.json`.
+The dropdown offered the 4B alone, which made it worse than absent: an install
+pointed at the 9B *displayed* the 4B while running the 9B, and selecting that
+entry switched back to the 4B without a word.
+
+Both official base repos are now offered. **4B stays the default** — it is what
+`DEFAULT_BASE_REPO` points at, what `LICENSE.txt` describes, and the fork
+redistributes no weights.
+
+Picking a base repo:
+
+- reloads **everything** (transformer + VAE + Qwen3 text encoder), unlike a
+  single-file checkpoint which swaps the transformer alone;
+- **rebuilds the checkpoint list** — a 9B build does not fit a 4B pipeline and
+  vice versa, so the list has to follow the base — and creates the missing model
+  presets;
+- **persists the choice** to `preferences.json`: "depending on the project" spans
+  sessions, not runs;
+- for the 9B, states the **FLUX Non-Commercial License**, the **gated** repo and
+  the **~29 GB of VRAM** before the first run — not after 20 GB of download.
+
+A 401/403 from the Hub now comes back as an instruction (accept the licence on
+the model page, set a READ token) instead of a `huggingface_hub` traceback. And
+when a base repo's transformer config cannot be read at all — the usual symptom
+of an unaccepted gated repo — the log says the 4B/9B filter is OFF for that base
+rather than silently listing every checkpoint.
+
+New config key `klein_base_repos` restricts the dropdown; set it to the 4B alone
+to never be offered the 9B. The dropdown is labelled **Klein checkpoint** — it
+still said Qwen.
+
 ## 1.18.6 — Loading a preset changed everything except the model
 
 Reported as "I change the model and it always uses the default one". It was true,
