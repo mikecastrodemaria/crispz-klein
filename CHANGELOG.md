@@ -7,6 +7,34 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.22.0 — An empty Models tab, and a text encoder moved once per hand
+
+**The Asset Browser showed nothing.** Its catalogue scanned only the *main*
+checkpoints folder and recognised only `.safetensors`. On an install that keeps
+its models elsewhere — the "extra checkpoints folder", another disk — the main
+folder is empty, so the Models tab was empty too: **0 entries against a library
+of 22**, GGUF files never listed at all. It now walks the same folders the rest
+of the app uses (`_checkpoint_dirs()` / `_lora_dirs()`, main first, same name =
+main wins) and the same extensions, GGUF included for models. Verified against
+the real library: 0 → 22.
+
+**Prompt embeddings are cached.** Encoding a prompt moves the Qwen3 text encoder
+onto the GPU — 16.4 GB on the 9B, paid on *every* pipeline call under offload.
+The detailer pays it once per hand, for the same (empty) prompt every time: a
+4-step hand pass measured `prompt+setup 5.8s | diffusion 0.3s | decode 1.3s`.
+`encode_prompt()` short-circuits the encoder as soon as it is handed
+`prompt_embeds`, so embeddings are now computed once per prompt and reused. Kept
+in RAM (a few MB, no VRAM held, survives offload moves), bounded, cleared
+whenever the pipeline is freed — an embedding from another encoder would be
+wrong. Any failure falls back to passing the prompt through: a cache must never
+cost a render. `prompt_embed_cache: 0` disables it.
+
+The gain is not measured here — the GPU was in use. The debug line
+`prompt embeds reused (text encoder not touched)` tells you when it hits.
+
+Regression tests: `tests/test_asset_browser_dirs.py`,
+`tests/test_prompt_embed_cache.py`.
+
 ## 1.21.0 — The detailer ran 12 steps on a model distilled for 4
 
 Reported as "the hand detailer takes ages". Measured on an RTX 5090, 1024x1024,

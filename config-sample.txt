@@ -11,6 +11,8 @@
     "job_queue": {
         "enabled": true
     },
+    "_prompt_embed_cache_help": "How many encoded prompts to keep. Encoding a prompt moves the Qwen3 text encoder across PCIe - on the 9B that is 16.4 GB, paid on EVERY pipeline call under offload. The detailer pays it once per hand for the SAME (empty) prompt. Cached embeddings are passed straight to the pipeline, which then never touches the encoder. 0 disables the cache.",
+    "prompt_embed_cache": 8,
     "_job_queue_help": "Job queue panel ('+ Queue' snapshots all settings incl. model; 'Run queue' chains them; ⏸ Pause finishes the current job then halts; Stop interrupts it mid-render and the interrupted job STAYS queued). The queue is saved to cache/queue.json after every change and every job, and restored at startup (persist=false to disable). enabled=false removes the UI entirely (zero cost).",
     "tag_autocomplete": {
         "enabled": true,
