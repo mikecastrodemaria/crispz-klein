@@ -375,17 +375,20 @@ def _cfg(negative=None, guidance=None):
 
 
 # --- Cache d'embeddings de prompt -------------------------------------------------
-# Encoder un prompt fait passer l'encodeur Qwen3 (16,4 Go sur le 9B) par le GPU. En
-# offload 'model' ce transfert est paye a CHAQUE appel de pipeline -- y compris les
-# passes du detailer, qui refont le MEME prompt (vide, par defaut) une fois par main.
-# Mesure sur klein-9B GGUF: une passe de main a 4 steps = prompt+setup 5,8 s pour
-# 0,3 s de diffusion. Le calcul avait disparu; restait le deplacement des poids.
+# Encoder un prompt fait passer l'encodeur de texte par le GPU. En offload 'model'
+# ce transfert est paye a CHAQUE appel de pipeline -- y compris les passes du
+# detailer, qui refont le MEME prompt une fois par visage et par main.
+# Mesure sur crispz-klein (9B GGUF, offload model): prompt+setup 5,2-6,1 s par
+# passe sans cache contre 1,7-1,8 s avec, pour 0,3 s de diffusion. 2,1x par main.
+# Sans offload le gain tombe a ~8 % (l'encodeur est deja resident, rien a deplacer).
 #
-# encode_prompt() court-circuite l'encodeur des qu'on lui passe prompt_embeds (les
-# text_ids sont recalcules a partir des embeddings, c'est gratuit). On memorise donc
-# les embeddings par (encodeur, prompt, longueur, couches) et on les repasse.
+# encode_prompt() court-circuite l'encodeur des qu'on lui passe ses embeddings. On
+# memorise donc le TUPLE qu'il renvoie et on le repasse a __call__ via _EMBED_OUTS.
 # Les tenseurs sont gardes en RAM (quelques Mo): ils ne retiennent pas de VRAM et
 # survivent aux deplacements de l'offload.
+# Flux2Klein: encode_prompt -> (prompt_embeds, text_ids); text_ids est
+# recalcule a partir des embeddings, inutile de le garder.
+_EMBED_OUTS = ("prompt_embeds",)
 _EMBED_CACHE = {}
 _EMBED_CACHE_MAX = max(0, int(CONFIG.get("prompt_embed_cache", 8) or 0))
 
@@ -401,21 +404,27 @@ def _embed_cache_clear(why=""):
 def _cached_prompt_embeds(pipe, prompt, kw):
     """Embeddings de `prompt` pour ce pipeline, calcules une fois puis reutilises.
 
-    Renvoie None si le cache est desactive, si le pipeline n'expose pas l'API
-    attendue, ou si l'encodage echoue: dans tous ces cas l'appelant repasse le
-    prompt en clair et rien ne change. Un cache ne doit jamais casser un rendu."""
-    if not _EMBED_CACHE_MAX:
+    Renvoie un dict de kwargs pour __call__, ou None si le cache est desactive, si
+    le pipeline n'expose pas l'API attendue, ou si l'encodage echoue: dans tous ces
+    cas l'appelant repasse le prompt en clair et rien ne change. Un cache ne doit
+    jamais casser un rendu."""
+    if not _EMBED_CACHE_MAX or not _EMBED_OUTS:
         return None
     try:
         enc = getattr(pipe, "text_encoder", None)
         if enc is None or not hasattr(pipe, "encode_prompt"):
             return None
-        key = (BASE_REPO, id(enc), prompt,
-               kw.get("max_sequence_length"), kw.get("text_encoder_out_layers"))
+        # Les LoRA font partie de la clef: certaines touchent l'encodeur de texte,
+        # et un embedding calcule sans elles serait faux.
+        key = (BASE_REPO, id(enc), prompt, kw.get("max_sequence_length"),
+               tuple(sorted((p, float(w)) for p, w in _APPLIED_LORAS)))
         hit = _EMBED_CACHE.get(key)
         if hit is None:
-            emb, _ids = pipe.encode_prompt(prompt=prompt, device=pipe._execution_device)
-            hit = emb.detach().to("cpu")
+            out = pipe.encode_prompt(prompt=prompt, device=pipe._execution_device)
+            if not isinstance(out, (tuple, list)):
+                out = (out,)
+            hit = tuple(v.detach().to("cpu") if hasattr(v, "detach") else v
+                        for v in out[:len(_EMBED_OUTS)])
             if len(_EMBED_CACHE) >= _EMBED_CACHE_MAX:
                 _EMBED_CACHE.pop(next(iter(_EMBED_CACHE)))      # FIFO, borne simple
             _EMBED_CACHE[key] = hit
@@ -423,7 +432,9 @@ def _cached_prompt_embeds(pipe, prompt, kw):
                  f"{_EMBED_CACHE_MAX}) for {prompt[:40]!r}")
         else:
             _dbg(f"prompt embeds reused (text encoder not touched) for {prompt[:40]!r}")
-        return hit.to(pipe._execution_device)
+        dev = pipe._execution_device
+        return {name: (v.to(dev) if hasattr(v, "to") else v)
+                for name, v in zip(_EMBED_OUTS, hit) if name}
     except Exception as e:
         _dbg(f"prompt embed cache off for this call ({type(e).__name__}: {e})")
         return None
@@ -459,11 +470,11 @@ def _qwen_call(pipe, **kw):
         kw["mask_image"] = Image.new("L", ref.size, 255)
         _dbg(f"img2img -> inpaint pipeline + masque blanc plein {ref.size}")
     # Reutilise les embeddings si ce prompt a deja ete encode (cf. _EMBED_CACHE).
-    # Passer prompt_embeds fait sauter l'encodeur de texte: c'est tout le gain.
-    if isinstance(kw.get("prompt"), str) and "prompt_embeds" not in kw:
+    # Les passer fait sauter l'encodeur de texte: c'est tout le gain.
+    if isinstance(kw.get("prompt"), str) and not any(k in kw for k in _EMBED_OUTS):
         _emb = _cached_prompt_embeds(pipe, kw["prompt"], kw)
-        if _emb is not None:
-            kw["prompt_embeds"] = _emb
+        if _emb:
+            kw.update(_emb)
             kw["prompt"] = None
 
     # Ventilation encode / diffusion / decode, en debug seul. Un total ("50s") ne dit

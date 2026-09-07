@@ -7,6 +7,23 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.22.2 — The embed cache, generalised for the family
+
+Porting the cache to the siblings showed the klein version was too narrow: it
+unpacked `encode_prompt()` as exactly two values and kept only the first. The
+family's pipelines return different tuples — `(prompt_embeds,
+prompt_embeds_mask)` on Qwen-Image and Krea 2, `(prompt_embeds,
+pooled_prompt_embeds, text_ids)` on Flux — so the same code would have silently
+fallen back everywhere else, or dropped a tensor `__call__` needs.
+
+The cache now keeps the whole tuple and maps it back through `_EMBED_OUTS`, one
+constant per fork. It also keys on the **applied LoRAs**: a LoRA can touch the
+text encoder, and an embedding computed without it would be wrong — a real hole
+in the first version, harmless on klein (its LoRAs are transformer-only) but not
+on Flux.
+
+Behaviour on klein is unchanged; the measurements of 1.22.0 still hold.
+
 ## 1.22.1 — Leftovers from the parent model, in places that matter
 
 A global grep for `qwen` and `z-image` outside the lineage notes. Most hits were
