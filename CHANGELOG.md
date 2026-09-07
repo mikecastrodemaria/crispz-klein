@@ -7,6 +7,30 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.25.0 — A Performance preset for undistilled checkpoints
+
+1.23.0 let a real CFG through on a single-file checkpoint, but the UI offered no
+way to ask for one: **Turbo (4 steps)** and **Quality (8 steps)** both pin
+guidance at 1.0, and the only route was hand-editing `model_profiles` in
+`config.txt`. The radio's own help still claimed the guidance was inert — true
+for the base repo, false since 1.23.0 for an override.
+
+- **Undistilled checkpoint (28 steps, CFG 3.5)** joins the Performance presets,
+  and lights back up when the sliders are moved to those values.
+- The help now says *where* guidance applies instead of declaring it dead.
+- A guidance discarded on the base repo is **announced** — once per value, not
+  once per image. It was silently dropped, which is exactly how you end up
+  believing a slider works.
+
+Also fixed while there: the radio's fallback value was the hardcoded string
+`"Turbo (8 steps)"`, a preset that does not exist. Masked today because both
+configs set `default_performance`, but drop that key and the radio receives a
+value outside its own `choices` — the Gradio failure mode that made preset
+loading silently keep the old model in 1.18.6. It falls back to the first real
+preset now.
+
+Regression tests in `tests/test_undistilled_guidance.py`.
+
 ## 1.24.0 — MXFP8: a scale that is an exponent, not a multiplier
 
 `snofs14Flux2Klein9b_14Distilled.safetensors` crashed on load:

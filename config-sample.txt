@@ -39,7 +39,7 @@
     "_caption_model_help": "Local auto-describe model (no Ollama): blip-large (default) | blip-base",
     "improve_local_keywords": "highly detailed, sharp focus, professional photography, intricate details, natural lighting, high quality, 8k",
     "_improve_local_keywords_help": "Quality tags appended by 'Improve prompt' when no Ollama model is selected (local rule-based fallback, no model).",
-    "_performance_presets_help": "name -> [steps, guidance] or [steps, guidance, lora_file]. NB klein: the model is step-wise distilled, guidance is IGNORED by diffusers (measured bit-identical from 1.0 to 8.0). Only the step count matters here; the guidance value is kept at 1.0 so the UI never suggests an active CFG.",
+    "_performance_presets_help": "name -> [steps, guidance] or [steps, guidance, lora_file]. On the klein BASE repo the model is step-wise distilled and guidance is IGNORED by diffusers (measured bit-identical from 1.0 to 8.0), so those presets keep it at 1.0. It is NOT ignored on a single-file checkpoint: some community builds are explicitly undistilled ('use with Turbo Lora') and need a real CFG plus many more steps - that is what the Undistilled preset is for.",
     "performance_presets": {
         "Turbo (4 steps)": [
             4,
@@ -48,6 +48,10 @@
         "Quality (8 steps)": [
             8,
             1.0
+        ],
+        "Undistilled checkpoint (28 steps, CFG 3.5)": [
+            28,
+            3.5
         ]
     },
     "_model_profiles_help": "Auto steps/guidance when a checkpoint is selected, matched by substring on the file name (first match wins, in order). klein is distilled: 4 steps, guidance 1.0 (no CFG at all).",

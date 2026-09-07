@@ -389,6 +389,7 @@ def _cfg(negative=None, guidance=None):
 # Flux2Klein: encode_prompt -> (prompt_embeds, text_ids); text_ids est
 # recalcule a partir des embeddings, inutile de le garder.
 _EMBED_OUTS = ("prompt_embeds",)
+_CFG_IGNORED_SAID = set()   # valeurs de guidance deja signalees comme inertes
 _EMBED_CACHE = {}
 _EMBED_CACHE_MAX = max(0, int(CONFIG.get("prompt_embed_cache", 8) or 0))
 
@@ -478,6 +479,11 @@ def _qwen_call(pipe, **kw):
                  f"distille l'ignorera; un modele 'undistilled' en a besoin.")
             kw["guidance_scale"] = want
         else:
+            if distilled and want > 1.0 and want not in _CFG_IGNORED_SAID:
+                _CFG_IGNORED_SAID.add(want)
+                _log(f"guidance {want:g} ignoree: {BASE_REPO} est distille et la CFG y "
+                     f"est inerte (mesuree bit-a-bit identique de 1.0 a 8.0). Elle "
+                     f"s'applique en revanche sur un checkpoint single-file charge.")
             kw["guidance_scale"] = 1.0 if distilled else want
     if "strength" in kw and kw.get("image") is not None and "mask_image" not in kw:
         img = kw["image"]

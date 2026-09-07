@@ -597,6 +597,13 @@ def _refresh_checkpoints(new_dir, extra_dir=""):
     return (gr.update(choices=ZIMAGE_BASE_REPOS + cks), msg, gr.update(choices=list_presets()))
 
 
+def _valid_performance(name):
+    """Nom de preset Performance sur (steps, guidance), ou le premier preset reel.
+    Une valeur hors `choices` est rejetee par le frontend Gradio: le radio garderait
+    alors une autre valeur que celle affichee, en silence."""
+    return name if name in PERFORMANCE else (next(iter(PERFORMANCE), None))
+
+
 def _performance_label_for(steps, guidance):
     """Nom du preset Performance correspondant a (steps, guidance), sinon None.
     Data-driven: respecte les presets surcharges via config.txt (performance_presets)."""
@@ -3718,10 +3725,16 @@ def build_ui():
                                                               scale=0, min_width=80)
                             preset_status = gr.Markdown("")
                         performance = gr.Radio(list(PERFORMANCE),
-                                               value=CONFIG.get("default_performance", "Turbo (8 steps)"),
+                                               # repli = le 1er preset REEL. Un nom code en dur finit
+                                               # par ne plus exister (c'etait "Turbo (8 steps)"), et
+                                               # une valeur hors choices est refusee par le frontend.
+                                               value=_valid_performance(CONFIG.get("default_performance")),
                                                label="Performance",
-                                               info="Sets the step count. NB: the guidance value is inert - "
-                                                    "klein is distilled and ignores CFG.")
+                                               info="Sets steps and CFG. On the klein base repo the "
+                                                    "guidance is inert (distilled, measured bit-identical "
+                                                    "1.0 to 8.0). On a single-file checkpoint it is NOT: "
+                                                    "some community builds are undistilled and need a real "
+                                                    "CFG and many more steps.")
                         aspect = gr.Dropdown(list(ASPECT_RATIOS),
                                              value=CONFIG.get("default_aspect_ratio", "1024 x 1024  (1:1)"),
                                              label="Aspect ratio")
