@@ -7,6 +7,27 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.20.3 — The hand detailer was declared missing while it was ready to run
+
+`_hands_available()` tested for the `ultralytics` package. But at run time the
+detailer needs only **onnxruntime** plus the detector exported once to
+`cache/*.onnx`; ultralytics is required solely for that export, which
+`cz_detailer._ensure_hand_onnx()` deliberately runs in a **subprocess** — its
+docstring records why, with checksums: YOLO merely resident in the diffusion
+process corrupts shared weights during offload transfers, and renders come out
+tiled, then NaN.
+
+So the check punished exactly the people who had followed that advice and
+exported the `.onnx` from a throwaway venv: the detector was in place, and the
+app answered `detail_hands: false`. It now reports available when onnxruntime is
+there and either ultralytics can do the export on demand **or** the `.onnx`
+already exists.
+
+`_hand_detailer_help` said the feature needs ultralytics and "does nothing"
+without it; it now describes the export-once path and why it is separate.
+
+Regression test: `tests/test_hands_available.py`.
+
 ## 1.20.2 — "50s" does not say what to optimise
 
 A render time was logged as one number. On an offloaded base that number hides
