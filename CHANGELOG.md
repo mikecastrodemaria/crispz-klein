@@ -7,6 +7,36 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.24.0 — MXFP8: a scale that is an exponent, not a multiplier
+
+`snofs14Flux2Klein9b_14Distilled.safetensors` crashed on load:
+
+    RuntimeError: The size of tensor a (4096) must match the size of tensor b (128)
+
+raised deep in the dequantizer, naming neither the file nor the format. Two
+distinct bugs sat behind it, and the second was the dangerous one.
+
+**Block-wise scales.** The dequantizer handled one scale per tensor or per output
+row. This file carries `[4096, 128]` against a `[4096, 4096]` weight: one scale
+per group of 32 along the input dimension. The broadcast could only fail.
+
+**The scale is an exponent.** The file declares itself:
+`{"format": "mxfp8", "group_size": 32}` — OCP microscaling. Its `uint8` scale
+encodes an E8M0 exponent, so the real factor is `2^(s-127)`. Read as a linear
+multiplier (~115 instead of 2⁻¹²) the weights came out ~470000× too large:
+**std 17093 where transformer weights sit at 0.024**. Nothing would have raised:
+the load succeeds, the render succeeds, and the image is a smooth blur. Decoded
+properly: mean −0.00001, std 0.0239, min/max ±0.44.
+
+An unrecognised scale layout is now refused by name, with both shapes, instead of
+failing inside torch.
+
+Checked across the local library: every other FP8/INT8 checkpoint uses linear
+`float32` scales and was already handled correctly — no cached dequantization
+needed purging.
+
+Regression test: `tests/test_mxfp8_scale.py`.
+
 ## 1.23.0 — An "undistilled" checkpoint had no way to get its CFG
 
 klein-4B and 9B are step-wise distilled: guidance is inert there, measured

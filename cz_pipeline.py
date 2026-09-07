@@ -1135,6 +1135,46 @@ def _safetensors_comfy_prefixed(path):
         return False
 
 
+def _apply_quant_scale(t, s, key, path, cfg=None):
+    """Applique l'echelle de dequantification, quelle que soit sa granularite.
+
+    Trois formes existent dans la nature, et la troisieme faisait planter le
+    chargement au fond de torch sur "The size of tensor a (4096) must match the
+    size of tensor b (128)", sans nommer ni le fichier ni le format:
+      - scalaire / [1]        -> une echelle pour tout le tenseur
+      - [out] / [out, 1]      -> une echelle par ligne de sortie
+      - [out, nb]             -> PAR BLOCS: nb groupes le long de l'entree, chacun
+                                 couvrant in/nb elements (vu a 32 sur un FP8 klein-9B)
+    Toute autre forme est refusee AVEC ses dimensions: un format inconnu doit se
+    dire, pas se deviner."""
+    # MXFP8 (OCP microscaling, ce que produit ComfyUI sur FLUX.2): l'echelle est un
+    # uint8 qui code un EXPOSANT E8M0, pas un multiplicateur. La lire comme un facteur
+    # lineaire donne des poids ~10000x trop grands -- l'image sort en bouillie ou en
+    # NaN, sans qu'aucune etape ne se plaigne. Le fichier declare son format dans le
+    # blob `comfy_quant`; a defaut, un uint8 ne peut etre qu'un exposant.
+    fmt = str((cfg or {}).get("format", "")).lower()
+    if fmt.startswith("mx") or s.dtype == torch.uint8:
+        s = torch.exp2(s.to(torch.float32) - 127.0)
+    else:
+        s = s.to(torch.float32)
+    if s.dim() == 0 or s.numel() == 1:
+        return t * s.reshape(())
+    if s.dim() == 1 and t.dim() == 2 and s.shape[0] == t.shape[0]:
+        return t * s.unsqueeze(1)
+    if s.dim() == 2 and s.shape[0] == t.shape[0]:
+        if s.shape[1] == 1:
+            return t * s
+        nb = s.shape[1]
+        if t.dim() == 2 and t.shape[1] % nb == 0:
+            g = t.shape[1] // nb          # taille de groupe le long de l'entree
+            return (t.view(t.shape[0], nb, g) * s.unsqueeze(-1)).view(t.shape[0], -1)
+    raise RuntimeError(
+        f"{os.path.basename(path)}: unsupported FP8/INT8 scale layout on '{key}' "
+        f"(weight {tuple(t.shape)}, scale {tuple(s.shape)}). Known layouts: one "
+        f"scale for the tensor, one per output row, or one per block along the "
+        f"input dimension. Please report the file.")
+
+
 def _load_dequant_state_dict(path):
     """Charge en RAM un single-file ComfyUI et le rend au LAYOUT DIFFUSERS, dequantifie
     en DTYPE (bf16) tenseur par tenseur. Sert les deux cas: quantifie (FP8/INT8 'scaled')
@@ -1232,8 +1272,9 @@ def _load_dequant_state_dict(path):
                     s = raw[cand]
                     break
             t = t.to(dev).to(torch.float32)
-            if s is not None:                # scalaire ou [out,1] -> broadcast
-                t = t * s.to(dev).to(torch.float32)
+            cfg0 = qcfg.get(k[:-len(".weight")]) if k.endswith(".weight") else None
+            if s is not None:
+                t = _apply_quant_scale(t, s.to(dev), k, path, cfg0)
             # ConvRot (int8_tensorwise comfy-quants): les poids stockes ont ete tournes
             # W_rot = (W.view(out, in/g, g) @ H.T).reshape(...) AVANT quantification ->
             # reconstruction = re-multiplier par H (orthonormee, symetrique) par groupe.
