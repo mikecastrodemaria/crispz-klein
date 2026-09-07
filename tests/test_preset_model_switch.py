@@ -197,6 +197,19 @@ def test_base_swap_refreshes_the_checkpoint_list():
     print("OK test_base_swap_refreshes_the_checkpoint_list")
 
 
+def test_choosing_a_base_repo_retries_its_dimension():
+    """La dimension d'un repo est cachee, echecs compris. Un repo gated refuse avant
+    l'acceptation de la licence laissait un None colle pour toute la session: filtre
+    4B/9B eteint meme une fois la licence acceptee. Le choisir vaut "reessaie"."""
+    def check():
+        P._BASE_DIM_CACHE[U.KLEIN_BASE_9B] = None     # echec precedent (403 gated)
+        P.BASE_REPO = U.KLEIN_BASE_4B
+        P.set_zimage_model(U.KLEIN_BASE_9B)
+        assert U.KLEIN_BASE_9B not in P._BASE_DIM_CACHE,             "l'echec cache doit etre purge quand on rechoisit le repo"
+    _with_lib(check)
+    print("OK test_choosing_a_base_repo_retries_its_dimension")
+
+
 def test_gated_repo_error_says_what_to_do():
     """Un 401/403 du Hub sur le 9B doit devenir une consigne, pas une trace."""
     hint = P._hf_access_hint(U.KLEIN_BASE_9B,
@@ -222,5 +235,6 @@ if __name__ == "__main__":
     test_preset_never_pushes_a_checkpoint_the_dropdown_refuses()
     test_both_base_repos_are_selectable_and_the_9b_is_announced()
     test_base_swap_refreshes_the_checkpoint_list()
+    test_choosing_a_base_repo_retries_its_dimension()
     test_gated_repo_error_says_what_to_do()
     print("ALL OK")

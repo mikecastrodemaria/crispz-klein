@@ -604,6 +604,11 @@ def set_zimage_model(repo_or_path):
     elif repo_or_path != BASE_REPO:
         # Le repo de base change: VAE/encodeur/tokenizer changent aussi -> reload complet.
         BASE_REPO = repo_or_path
+        # La dimension du repo est mise en cache, ECHECS COMPRIS. Un repo gated dont
+        # la licence n'etait pas encore acceptee laissait donc un None colle pour toute
+        # la session: filtre 4B/9B eteint meme apres avoir accepte la licence, jusqu'au
+        # redemarrage. Choisir ce repo vaut "reessaie", on purge son entree.
+        _BASE_DIM_CACHE.pop(repo_or_path, None)
         free_vram()
         _log("Klein base repo changed -> will reload")
 

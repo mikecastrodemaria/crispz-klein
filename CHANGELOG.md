@@ -7,6 +7,16 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.19.3 — Accepting a gated licence took effect only after a restart
+
+`_base_hidden_dim()` caches a base repo's hidden dimension, **failures included**.
+Selecting the 9B before accepting its licence cached a `None`, and that `None`
+stuck for the whole session: the 4B/9B checkpoint filter stayed off — every
+checkpoint listed, wrong-variant ones included — even after the licence was
+accepted, until a restart.
+
+Selecting a base repo now drops its cached entry: choosing it means "try again".
+
 ## 1.19.2 — A refusal should name the menu, not the config file
 
 Refusing a wrong-variant checkpoint said *"point 'klein_model' at the matching
