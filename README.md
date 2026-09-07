@@ -42,9 +42,10 @@ Qwen-Image-Edit presets of the upstream fork are incompatible with FLUX.2. Both 
 
 > ⚠️ **4B by default, 9B on request.** `FLUX.2-klein-4B` is Apache 2.0 and is what
 > this fork ships with. `FLUX.2-klein-9B` is offered in the same dropdown, but it is
-> under the **FLUX Non-Commercial License**, is **gated** on Hugging Face (accept the
-> licence, then set `hf_token`) and needs **~29 GB of VRAM**. Picking it says all of
-> that before the first run.
+> under the **FLUX Non-Commercial License**, is **gated** on Hugging Face and needs
+> **~29 GB of VRAM** (~35 GB of download). Picking it says all of that before the
+> first run — setup in
+> [Enabling the 9B](#enabling-the-9b--the-hugging-face-part).
 
 On top of crispz's upscaler it adds:
 
@@ -528,11 +529,57 @@ launch starts on it. A checkpoint the list refuses is **refused on selection**, 
 the reason, instead of failing mid-run on `expected shape [18432, 3072], but got
 [24576, 4096]`.
 
-> The **9B** is under the **FLUX Non-Commercial License** (the 4B is Apache 2.0) and
-> its repo is **gated**: accept the licence on its Hugging Face page with your
-> account, then set a READ token (`hf_token` in `config.txt`). Without that, the load
-> fails with a message saying exactly this. Restrict the dropdown with the config key
-> `klein_base_repos` if you never want the 9B offered.
+### Enabling the 9B — the Hugging Face part
+
+The 4B is public: nothing to do. The **9B is gated**, so the Hub will refuse it
+until two things line up — and they are two *different* things, which is where the
+time gets lost.
+
+**1. Accept the licence**, at
+<https://huggingface.co/black-forest-labs/FLUX.2-klein-9B> (the button under the
+title). It is `gated: auto` — no queue, no human review, it takes effect at once.
+Accept it on the **exact** repo: `-9b-fp8`, `-9b-kv`, `-base-9B` and the rest each
+have their own gate, and accepting one does not open another.
+
+**2. Give the app a token from that same account.** Either:
+
+```bat
+huggingface-cli login          REM read token, picked up without restarting the app
+```
+
+or `"hf_token": "hf_..."` in `config.txt` (read at import → restart), or the field
+in **Advanced → Models** (applied immediately and persisted).
+
+> **The trap: the account that accepted the licence must be the account the token
+> belongs to.** A token that works everywhere else — it pulls the 4B fine — still
+> gets a `403 GatedRepoError` on the 9B if the licence was accepted while your
+> browser was logged in as someone else. The error looks identical to "licence not
+> accepted", so check who the app actually is:
+>
+> ```bat
+> huggingface-cli whoami
+> ```
+
+If the Hub refuses, the app does not hand you a `huggingface_hub` traceback: it
+says the repo is gated, links the page to accept, and tells you whether a token is
+being sent at all — so you know which of the two halves is missing.
+
+**Then pick the 9B in the dropdown.** Selecting a base repo also re-reads its
+dimension, so a licence accepted *after* a failed attempt takes effect on the next
+selection rather than at the next restart.
+
+**What lands on disk:** ~35 GB — transformer 18.2 GB + Qwen3 8B text encoder
+16.4 GB + VAE. The repo itself totals 52.9 GB, but the extra 18.2 GB is
+`flux-2-klein-9b.safetensors` at the root, the single-file build, which
+`from_pretrained` does not fetch.
+
+**A local 9B `.safetensors` does not spare you any of this.** A single-file
+checkpoint only replaces the *transformer*; the VAE, the text encoder and the
+architecture config still come from the gated base repo. An fp8 or GGUF 9B build
+saves VRAM, not the licence.
+
+Set `klein_base_repos` to the 4B alone in `config.txt` if you never want the 9B
+offered in the first place.
 
 Switching the dropdown automatically syncs **steps, guidance and the Performance
 radio**. The change is applied on the next **Generate**.
