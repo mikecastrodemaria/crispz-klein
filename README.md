@@ -103,12 +103,19 @@ On top of crispz's upscaler it adds:
   (the missing bands are generated instead, centre kept pixel-for-pixel, seams blended
   by a light pass; config `force_ratio_mode`, `force_ratio_extend_denoise`).
 - **Presets (Fooocus-style)** (Settings > ⭐ Presets): **save / load / update / delete**
-  presets — a preset bundles prompt, styles, size, steps/CFG, sampler, checkpoint,
-  transformer + LoRAs, and **Load** switches the model/LoRAs too. Stored in `presets/*.json`.
+  presets — a preset bundles prompt, styles, size, steps/CFG, sampler, **base repo** +
+  checkpoint, transformer and LoRAs, and **Load** switches the model/LoRAs too. Stored
+  in `presets/*.json`.
   A **basic preset is auto-created for every loadable model** (on startup and when you
   Refresh the checkpoint list) if it doesn't already exist yet — named after the model,
   with steps/CFG from its profile. Existing presets are never overwritten; skipped
   models (LoRA/SVDQuant files, foreign GGUFs) get none.
+  A single-file checkpoint only swaps the *transformer*, so it is only meaningful under
+  the base repo that provides its VAE and text encoder — which is why the preset records
+  that base and **Load switches to it** when it differs. The swap downloads nothing by
+  itself (the weights come at the next Generate) but it does release the warm model, so
+  it is announced. A preset whose checkpoint still cannot load says which base to pick
+  and where, before explaining why.
 - **Seed**: **♻️ Reuse last seed** (refills the real seed of the previous render) + **Fix
   seed** (no +1 per image). A random `-1` seed is resolved to a concrete value so it is
   actually saved in the metadata.

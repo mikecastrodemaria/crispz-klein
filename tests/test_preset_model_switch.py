@@ -13,6 +13,7 @@ Run:  .venv/Scripts/python tests/test_preset_model_switch.py
 """
 import json
 import os
+import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -46,6 +47,10 @@ def _with_lib(fn, base_dim=3072):
     P.BASE_REPO = "base-4b"
     P._BASE_DIM_CACHE["base-4b"] = base_dim
     U._PRESETS_DIR = os.path.join(TMP, "presets")
+    # Reparti a neuf: TMP survit d'une execution a l'autre, et _ensure_model_presets
+    # ne touche JAMAIS un preset existant -- un fichier laisse par un run precedent
+    # ferait passer un test qui ne teste plus rien.
+    shutil.rmtree(U._PRESETS_DIR, ignore_errors=True)
     os.makedirs(U._PRESETS_DIR, exist_ok=True)
     try:
         return fn()
@@ -105,12 +110,15 @@ def test_apply_checkpoint_refuses_the_wrong_variant():
     print("OK test_apply_checkpoint_refuses_the_wrong_variant")
 
 
-def _preset(name, ckpt, steps=7):
+def _preset(name, ckpt, steps=7, base=None):
     os.makedirs(U._PRESETS_DIR, exist_ok=True)
     p = os.path.join(U._PRESETS_DIR, name + ".json")
+    d = {"prompt": "a lighthouse", "steps": steps, "checkpoint": ckpt,
+         "transformer": "", "loras": []}
+    if base:
+        d["base_repo"] = base
     with open(p, "w", encoding="utf-8") as f:
-        json.dump({"prompt": "a lighthouse", "steps": steps, "checkpoint": ckpt,
-                   "transformer": "", "loras": []}, f)
+        json.dump(d, f)
     return p
 
 
@@ -146,6 +154,83 @@ def test_preset_never_pushes_a_checkpoint_the_dropdown_refuses():
             "le reste du preset doit s'appliquer quand meme"
     _with_lib(check)
     print("OK test_preset_never_pushes_a_checkpoint_the_dropdown_refuses")
+
+
+
+def test_a_preset_switches_its_own_base_repo():
+    """Un single-file n'echange que le transformer: il n'a de sens que sous la base
+    qui fournit VAE/encodeur/config. Un preset qui connait sa base la retablit."""
+    _ckpt("good4b.safetensors", 3072)
+    _ckpt("big9b.safetensors", 4096)
+    saved = {}
+
+    def check():
+        real_save, U._save_prefs_keys = U._save_prefs_keys, saved.update
+        P._BASE_DIM_CACHE[U.KLEIN_BASE_4B] = 3072
+        P._BASE_DIM_CACHE[U.KLEIN_BASE_9B] = 4096
+        try:
+            _preset("zz-9b", "big9b.safetensors", base=U.KLEIN_BASE_9B)
+            P.BASE_REPO = U.KLEIN_BASE_4B
+            P.ZIMAGE_TRANSFORMER = P.resolve_checkpoint("good4b.safetensors")
+
+            outs = U._ui_preset_load("zz-9b")
+            assert P.BASE_REPO == U.KLEIN_BASE_9B, P.BASE_REPO
+            upd, status = _ckpt_update(outs), outs[-1]
+            # la base a change -> le checkpoint 9B est desormais valide ET propose
+            assert upd.get("value") == "big9b.safetensors", upd
+            assert "big9b.safetensors" in upd.get("choices"), upd
+            assert "NOT switched" not in status, status
+            assert "Base model switched" in status, status
+            # le cout doit etre annonce, pas subi
+            assert "next **Generate**" in status and "released" in status, status
+            assert "Non-Commercial" in status, "la note du 9B doit suivre le swap"
+            assert saved.get(P.CFG_MODEL_KEY) == U.KLEIN_BASE_9B, saved
+        finally:
+            U._save_prefs_keys = real_save
+    _with_lib(check)
+    print("OK test_a_preset_switches_its_own_base_repo")
+
+
+def test_the_refusal_leads_with_the_action():
+    """Quelqu'un qui vient de cliquer Load cherche l'action, pas le diagnostic."""
+    _ckpt("good4b.safetensors", 3072)
+    _ckpt("big9b.safetensors", 4096)
+
+    def check():
+        P._BASE_DIM_CACHE[U.KLEIN_BASE_4B] = 3072
+        P.BASE_REPO = U.KLEIN_BASE_4B
+        P.ZIMAGE_TRANSFORMER = None
+        # preset SANS base_repo (ecrit avant le suivi de la base): on ne peut pas
+        # deviner sa base, mais on sait quelle variante veut ce fichier.
+        _preset("zz-old", "big9b.safetensors")
+        status = U._ui_preset_load("zz-old")[-1]
+        head = status.split("Why:")[0]
+        assert "Klein checkpoint" in head, f"l'action doit venir en premier: {head}"
+        assert U.KLEIN_BASE_9B in head, head
+        assert "Why:" in status, "le diagnostic doit suivre, pas preceder"
+        # et la reparation durable du vieux preset
+        assert "Update selected" in status, status
+    _with_lib(check)
+    print("OK test_the_refusal_leads_with_the_action")
+
+
+def test_saving_records_the_base_repo():
+    """Sans ca, tout preset cree aujourd'hui reproduit le bug de demain."""
+    _ckpt("good4b.safetensors", 3072)
+
+    def check():
+        P._BASE_DIM_CACHE[U.KLEIN_BASE_4B] = 3072
+        P.BASE_REPO = U.KLEIN_BASE_4B
+        vals = [""] * len(U._PRESET_KEYS)
+        vals[U._PRESET_KEYS.index("checkpoint")] = "good4b.safetensors"
+        U._ui_preset_save("zz-saved", *(vals + ["None"] * U.MAX_LORA_SLOTS
+                                        + [1.0] * U.MAX_LORA_SLOTS))
+        assert U._load_preset_file("zz-saved").get("base_repo") == U.KLEIN_BASE_4B
+        # et un preset auto-cree aussi
+        U._ensure_model_presets(["good4b.safetensors"])
+        assert U._load_preset_file("good4b").get("base_repo") == U.KLEIN_BASE_4B
+    _with_lib(check)
+    print("OK test_saving_records_the_base_repo")
 
 
 def test_both_base_repos_are_selectable_and_the_9b_is_announced():
@@ -233,6 +318,9 @@ if __name__ == "__main__":
     test_refusal_names_the_reason_and_the_fix()
     test_apply_checkpoint_refuses_the_wrong_variant()
     test_preset_never_pushes_a_checkpoint_the_dropdown_refuses()
+    test_a_preset_switches_its_own_base_repo()
+    test_the_refusal_leads_with_the_action()
+    test_saving_records_the_base_repo()
     test_both_base_repos_are_selectable_and_the_9b_is_announced()
     test_base_swap_refreshes_the_checkpoint_list()
     test_choosing_a_base_repo_retries_its_dimension()

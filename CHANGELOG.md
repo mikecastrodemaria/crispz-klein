@@ -7,6 +7,43 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.20.0 — A preset carries its base repo, and the refusal leads with the action
+
+A preset stored a `checkpoint` but not the base repo it belongs to. Since a
+single-file checkpoint only swaps the **transformer** — the VAE, the text encoder
+and the architecture config still come from the base — a 9B preset loaded under a
+4B base could never work. It could only report its own failure, which is what
+1.18.6 taught it to do. It now fixes itself instead.
+
+- **`base_repo` is saved in every preset**, by *Create*/*Update* and by the
+  auto-created per-model presets (recorded as the base the checkpoint was listed
+  under, which is the base that can load it).
+- **Load switches the base when the preset needs another one**, then applies its
+  checkpoint. Nothing is downloaded by the Load itself: the base swap marks the
+  pipeline for reload and the weights arrive on the next *Generate*. What is lost
+  immediately is the warm model in VRAM — so the status says so, along with the
+  9B's licence/gated/VRAM note when that is where you land.
+- A preset saved on a base repo that `klein_base_repos` does not offer is left
+  alone, and says so.
+
+**The refusal now starts with what to do.** It used to open with the diagnosis —
+variant, licence, VRAM, `FORK.md` — and someone who has just clicked *Load* is
+looking for the action, not the analysis. It now reads *"Pick
+`black-forest-labs/FLUX.2-klein-9B` in the Klein checkpoint dropdown above, then
+load this preset again"*, then `Why:`, then what stays active. The target repo is
+taken from the preset's `base_repo`, or inferred from the checkpoint's own hidden
+dimension when the preset predates base tracking — so an old preset is still
+actionable, and is told how to record its base once and for all.
+
+The startup line no longer counts presets that can switch their own base; only
+those that genuinely cannot load.
+
+`tests/test_klein_e2e.py` now pins `KLEIN_MODEL` to the 4B before importing
+the pipeline. Persisting the dropdown choice made that test follow whatever
+model was last picked in the UI: choosing the 9B for a project turned the test
+suite into a 35 GB download needing ~29 GB of VRAM, failing for a reason that
+had nothing to do with the code. `KLEIN_E2E_MODEL` aims it elsewhere on purpose.
+
 ## 1.19.3 — Accepting a gated licence took effect only after a restart
 
 `_base_hidden_dim()` caches a base repo's hidden dimension, **failures included**.

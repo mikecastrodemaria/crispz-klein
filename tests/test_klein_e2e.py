@@ -8,6 +8,14 @@
 import os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Le repo de base est PIN sur le 4B avant l'import de cz_pipeline. Sans ca, ce test
+# suit le dernier modele choisi dans l'UI (persiste dans preferences.json depuis
+# 1.19.0): choisir le 9B pour un projet faisait soudain telecharger 35 Go et
+# reclamer ~29 Go de VRAM a la suite de tests, qui echouait pour une raison qui
+# n'a rien a voir avec le code. Mettre KLEIN_E2E_MODEL pour viser une autre base.
+os.environ["KLEIN_MODEL"] = (os.environ.get("KLEIN_E2E_MODEL")
+                             or "black-forest-labs/FLUX.2-klein-4B")
+
 import torch
 from PIL import Image, ImageDraw
 import cz_pipeline as p
@@ -29,6 +37,8 @@ def step(name, fn):
 
 def main():
     ok = True
+    print(f"base repo: {p.BASE_REPO}"
+          f"{'  (KLEIN_E2E_MODEL)' if os.environ.get('KLEIN_E2E_MODEL') else ''}")
 
     print("\n[1] gen (txt2img)")
     img = step("generate", lambda: p.generate(P1, 1024, 1024, 4, 7))

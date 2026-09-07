@@ -2994,6 +2994,9 @@ def _ensure_model_presets(checkpoints):
             "schedule": (CONFIG.get("default_schedule") or "sgm_uniform").strip().lower(),
             "image_number": int(CONFIG.get("default_image_number", 1)),
             "checkpoint": f, "transformer": "", "loras": [],
+            # La base sous laquelle ce fichier a ete juge chargeable. Un single-file
+            # n'echange que le transformer: hors de cette base, il ne charge pas.
+            "base_repo": cz_pipeline.BASE_REPO,
         }
         try:
             os.makedirs(_PRESETS_DIR, exist_ok=True)
@@ -3017,9 +3020,16 @@ def _log_stale_model_presets(checkpoints):
     offered = set(checkpoints or []) | set(ZIMAGE_BASE_REPOS)
     stale = []
     for p in list_presets():
-        ck = (_load_preset_file(p) or {}).get("checkpoint")
-        if ck and ck not in offered:
-            stale.append(p)
+        d = _load_preset_file(p) or {}
+        ck = d.get("checkpoint")
+        if not ck or ck in offered:
+            continue
+        # Un preset qui connait sa base ET dont la base est offerte se repare tout
+        # seul au Load (il bascule la base, puis son checkpoint devient valide).
+        base = (d.get("base_repo") or "").strip()
+        if base and base != cz_pipeline.BASE_REPO and base in ZIMAGE_BASE_REPOS:
+            continue
+        stale.append(p)
     if stale:
         shown = ", ".join(stale[:6]) + ("..." if len(stale) > 6 else "")
         _log(f"{len(stale)} preset(s) name a checkpoint this install cannot load "
@@ -3037,6 +3047,9 @@ def _ui_preset_save(name, *vals):
     data = {k: v for k, v in zip(_PRESET_KEYS, scalars)}
     data["loras"] = [[dds[i], float(lws[i])] for i in range(half)
                      if dds[i] and dds[i] not in ("None", "none", "")]
+    # Pas un scalaire d'UI: le repo de base n'a pas de composant a lui (le dropdown
+    # 'Klein checkpoint' sert aux deux). On le lit sur le pipeline, qui fait foi.
+    data["base_repo"] = cz_pipeline.BASE_REPO
     try:
         os.makedirs(_PRESETS_DIR, exist_ok=True)
         with open(os.path.join(_PRESETS_DIR, name + ".json"), "w", encoding="utf-8") as f:
@@ -3044,6 +3057,72 @@ def _ui_preset_save(name, *vals):
     except Exception as e:
         return gr.update(), f"Save failed: {e}"
     return gr.update(choices=list_presets(), value=name), f"Preset '{name}' saved."
+
+
+def _preset_switch_base(data):
+    """Aligne le repo de base sur celui du preset. Renvoie ce qu'il faut en dire.
+
+    Un checkpoint single-file n'echange que le TRANSFORMER: il n'a de sens que sous
+    le repo de base qui fournit son VAE, son encodeur texte et sa config d'archi. Un
+    preset 9B charge sous une base 4B ne pouvait donc que constater son echec. On
+    memorise donc la base a l'enregistrement et on la retablit au chargement.
+
+    Le swap ne telecharge RIEN ici: set_zimage_model marque le pipeline pour
+    rechargement, le poids arrive au Generate suivant. Ce qui se perd tout de suite,
+    c'est le modele chaud en VRAM -- donc on le dit."""
+    want = (data.get("base_repo") or "").strip()
+    if not want or want == cz_pipeline.BASE_REPO:
+        return ""
+    if want not in ZIMAGE_BASE_REPOS:
+        return (f"\n\n⚠ This preset was saved on the base repo `{want}`, which is not "
+                f"offered here (config `klein_base_repos`). The base was left on "
+                f"`{cz_pipeline.BASE_REPO}`.")
+    was = cz_pipeline.BASE_REPO
+    set_zimage_transformer("")
+    set_zimage_model(want)
+    try:
+        _save_prefs_keys({cz_pipeline.CFG_MODEL_KEY: cz_pipeline.BASE_REPO})
+    except Exception:
+        pass
+    line = (f"\n\n🔄 **Base model switched** to `{want}` (this preset's base; was "
+            f"`{was}`). The loaded model was released — the next **Generate** reloads "
+            f"the whole pipeline, and downloads it if this base is not cached yet.")
+    note = BASE_REPO_NOTES.get(want)
+    return line + (f"\n\n{note}" if note else "")
+
+
+def _preset_ckpt_refusal(ckpt, data):
+    """Le message quand le checkpoint du preset n'est pas selectionnable.
+
+    Il doit commencer par CE QU'IL FAUT FAIRE. La raison technique (variante,
+    licence, VRAM) vient ensuite: quelqu'un qui vient de cliquer 'Load' cherche
+    l'action, pas le diagnostic."""
+    want = (data.get("base_repo") or "").strip()
+    dim = None
+    try:
+        dim = cz_pipeline._flux2_hidden_dim(resolve_checkpoint(ckpt))
+    except Exception:
+        pass
+    # La base a viser: celle du preset, sinon celle que reclame la variante du fichier
+    # -- sa dimension cachee la designe. Un vieux preset sans base_repo reste donc
+    # actionnable: on ne se contente pas de dire qu'il est vieux.
+    target = want or cz_pipeline._variant_repo(dim)
+    if target and target in ZIMAGE_BASE_REPOS and target != cz_pipeline.BASE_REPO:
+        action = (f"**Pick `{target}` in the _Klein checkpoint_ dropdown above, then "
+                  f"load this preset again.**")
+    else:
+        action = "**Fix the checkpoint folder(s), then load this preset again.**"
+    if not want:
+        # Preset anterieur au suivi de la base: le reparer une fois pour toutes evite
+        # de refaire ce detour a chaque chargement.
+        action += (" This preset predates base-repo tracking, so it cannot switch the "
+                   "base by itself — once it loads correctly, hit _Update selected_ "
+                   "to record the base in it.")
+    why = checkpoint_refusal(ckpt) or "it is not offered by the checkpoint list any more"
+    return (f"\n\n⚠ **Model NOT switched.** {action}\n\n"
+            f"Why: this preset asks for `{ckpt}` and {why}\n\n"
+            f"Everything else in the preset was applied; the model stays "
+            f"`{_current_model_label()}`.")
 
 
 def _ui_preset_load(name):
@@ -3057,15 +3136,18 @@ def _ui_preset_load(name):
     des presets auto-crees avant un changement de repo de base: le reste change, le
     modele non, et on croit que le changement de modele ne sert a rien."""
     data = _load_preset_file(name)
-    note = ""
+    note = _preset_switch_base(data)
     ckpt = data.get("checkpoint")
-    if ckpt and ckpt not in (ZIMAGE_BASE_REPOS + list_checkpoints()):
-        why = checkpoint_refusal(ckpt) or "it is not offered by the checkpoint list any more"
-        note = (f"\n\n⚠ **Model NOT switched** — this preset asks for `{ckpt}` and {why} "
-                f"Everything else in the preset was applied; the model stays "
-                f"`{_current_model_label()}`.")
+    cks = list_checkpoints()                       # apres l'eventuel swap de base
+    ckpt_upd = gr.update(choices=ZIMAGE_BASE_REPOS + cks)
+    if ckpt and ckpt not in (ZIMAGE_BASE_REPOS + cks):
+        note += _preset_ckpt_refusal(ckpt, data)
         data = {k: v for k, v in data.items() if k != "checkpoint"}
-    scal = [gr.update(value=data[k]) if k in data else gr.update() for k in _PRESET_KEYS]
+    elif ckpt:
+        ckpt_upd = gr.update(choices=ZIMAGE_BASE_REPOS + cks, value=ckpt)
+    scal = [ckpt_upd if k == "checkpoint"
+            else (gr.update(value=data[k]) if k in data else gr.update())
+            for k in _PRESET_KEYS]
     loras = data.get("loras", []) or []
     dd_up = [gr.update(value=(loras[i][0] if i < len(loras) else "None")) for i in range(MAX_LORA_SLOTS)]
     w_up = [gr.update(value=(float(loras[i][1]) if i < len(loras) else float(cz_pipeline.LORA_WEIGHT)))
@@ -3613,8 +3695,11 @@ def build_ui():
                     with gr.Tab("Settings"):
                         with gr.Accordion("⭐ Presets", open=False):
                             gr.Markdown("*A preset bundles prompt, styles, size, steps/CFG, "
-                                        "sampler, checkpoint, transformer + LoRAs. Load applies "
-                                        "them (incl. the model). Create/Update save the current state.*")
+                                        "sampler, **base repo** + checkpoint, transformer and "
+                                        "LoRAs. Load applies them all, switching the base repo "
+                                        "when the preset needs another one (announced — the "
+                                        "next Generate then reloads everything). Create/Update "
+                                        "save the current state.*")
                             # Auto-cree un preset basique par modele local avant de peupler
                             # le menu (les modeles FP8/INT8-INT4 sont deja exclus par la liste).
                             _cks = list_checkpoints()
