@@ -7,6 +7,35 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.21.0 — The detailer ran 12 steps on a model distilled for 4
+
+Reported as "the hand detailer takes ages". Measured on an RTX 5090, 1024x1024,
+2 hands, same seed:
+
+| | txt2img | detailer @12 steps | @4 steps |
+|---|---|---|---|
+| klein-4B, offload `none` | 2.0 s | 2.0 s/hand | **0.9 s/hand** |
+| klein-9B GGUF, offload `model` | ~11 s | 12.2 s/hand | **6.4 s/hand** |
+
+Each detected hand is a full diffusion pass, and its step count came from the
+**Refine steps** slider — default 12, inherited from crispz-studio and Z-Image.
+klein is distilled to 4, so two thirds of that work bought nothing: the two
+outputs differ by **MAE 0.7** over the whole image, with under 0.5 % of pixels
+more than 8 levels apart, all inside the crops.
+
+`detailer_steps` (new config key) now decides: `0` (default) follows the model
+profile, a positive integer forces a value, `-1` keeps the slider. It never
+*raises* the slider — asking for fewer steps stays the user's call.
+
+**What the phase split says is left.** With the compute removed, a hand pass on
+the 9B reads `prompt+setup 5.8s | diffusion 0.3s | decode 1.3s`. The diffusion is
+gone; what remains is the offloaded text encoder and transformer being moved
+across PCIe for a 300-pixel crop, once per hand. Four hands pay it four times.
+Caching the prompt embeds — the hand prompt is empty and identical every time —
+would remove most of it; not done here.
+
+Regression test: `tests/test_detailer_steps.py`.
+
 ## 1.20.3 — The hand detailer was declared missing while it was ready to run
 
 `_hands_available()` tested for the `ultralytics` package. But at run time the

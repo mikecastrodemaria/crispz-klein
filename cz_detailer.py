@@ -14,7 +14,7 @@ config 'face_detailer'. Reglages: 'face_detailer_denoise' (0.35), 'face_detailer
 import numpy as np
 from PIL import Image
 
-from cz_core import CONFIG, _log, _dbg
+from cz_core import CONFIG, profile_for_model, _log, _dbg
 
 DETAILER_ENABLED = bool(CONFIG.get("face_detailer", False))
 DETAILER_DENOISE = float(CONFIG.get("face_detailer_denoise", 0.35))
@@ -254,6 +254,36 @@ def _feather_mask(w, h):
     return cv2.GaussianBlur(m, (0, 0), max(3.0, min(w, h) * 0.06))
 
 
+def _detailer_steps(steps):
+    """Steps a utiliser pour UNE passe de retouche.
+
+    `steps` vient du curseur "Refine steps" (defaut 12), herite de crispz-studio et
+    de Z-Image. Sur un modele DISTILLE le budget utile est celui du modele -- 4 pour
+    klein -- et 12 ne fait que tripler la facture pour rien.
+
+    Mesure (RTX 5090, 2 mains, meme seed):
+      klein-4B         2.0 s/main a 12 steps -> 0.9 s/main a 4
+      klein-9B GGUF   12.2 s/main a 12 steps -> 6.4 s/main a 4
+    Ecart d'image entre les deux: MAE 0.7 sur l'image entiere, moins de 0.5 % des
+    pixels s'ecartant de plus de 8 niveaux -- et seulement dans les crops.
+
+    Config `detailer_steps`: 0/absent = suivre le profil du modele (recommande),
+    un entier = forcer cette valeur, -1 = garder le curseur Refine steps."""
+    want = CONFIG.get("detailer_steps", 0)
+    try:
+        want = int(want)
+    except (TypeError, ValueError):
+        want = 0
+    if want > 0:
+        return want
+    if want < 0:
+        return int(steps)
+    import cz_pipeline          # tardif: cz_pipeline importe cz_detailer
+    prof, _g = profile_for_model(str(cz_pipeline.ZIMAGE_TRANSFORMER
+                                     or cz_pipeline.BASE_REPO or ""))
+    return min(int(steps), max(1, int(prof)))
+
+
 def _detail_regions(image, boxes, prompt, seed, steps, denoise, kind,
                     margin=_MARGIN, min_size=_MIN_FACE, max_n=4, progress=None):
     """Coeur commun visages/mains: pour chaque bbox, crop elargi -> agrandi au sweet
@@ -266,6 +296,10 @@ def _detail_regions(image, boxes, prompt, seed, steps, denoise, kind,
     boxes = sorted(boxes, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]), reverse=True)[:max_n]
     out = image.convert("RGB")
     pipe = cz_pipeline.get_pipe("img2img")
+    _steps = _detailer_steps(steps)
+    if _steps != int(steps):
+        _dbg(f"detailer: {steps} -> {_steps} steps (model profile; config "
+             f"'detailer_steps' to override)")
     done = 0
     for i, b in enumerate(boxes):
         if (b[2] - b[0]) < min_size or (b[3] - b[1]) < min_size:
@@ -286,7 +320,7 @@ def _detail_regions(image, boxes, prompt, seed, steps, denoise, kind,
         work = (crop.resize((max(32, int(cw * scale)), max(32, int(ch * scale))), Image.LANCZOS)
                 if scale > 1.0 else crop)
         try:
-            ref = cz_pipeline._refine_whole(pipe, work, denoise, int(steps), prompt or "", seed)
+            ref = cz_pipeline._refine_whole(pipe, work, denoise, _steps, prompt or "", seed)
         except Exception as e:
             _log(f"detailer: refine failed on {kind} {i + 1} ({e})")
             continue
@@ -297,7 +331,7 @@ def _detail_regions(image, boxes, prompt, seed, steps, denoise, kind,
         out.paste(Image.fromarray(blend), (x1, y1))
         done += 1
     if done:
-        _log(f"detailer: refined {done} {kind}(s) (denoise {denoise}, steps {steps})")
+        _log(f"detailer: refined {done} {kind}(s) (denoise {denoise}, steps {_steps})")
     return out, done
 
 
