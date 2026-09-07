@@ -7,6 +7,28 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.20.1 — The 9B loaded, then died on a CUDA error that never said "VRAM"
+
+Measured on an RTX 5090 (31.8 GB usable): with `default_cpu_offload: none`, the
+9B base downloaded (4 min), loaded (279 s), and then died at the first diffusion
+step on `torch.AcceleratorError: CUDA error: unknown error`, raised inside
+`get_timestep_embedding` — a stack trace that names a sinusoidal embedding and
+never mentions memory. The cause is arithmetic: transformer 18.2 GB + Qwen3 8B
+text encoder 16.4 GB = ~35 GB of weights placed whole on a 32 GB card.
+
+Telling the user "~29 GB of VRAM" in a status line was not enough: the app still
+let them walk into it, five minutes at a time.
+
+`_effective_offload()` now also corrects the offload when the **base repo cannot
+fit** — the same thing it already did for GGUF transformers, for the same reason:
+the requested setting cannot work, and finding out costs minutes. The log says
+what was needed, what the card has, and that `model` streams the weights instead
+(slower per image, but it runs). A card that is big enough is left alone, and an
+unknown variant is never second-guessed.
+
+The load line also stops claiming "~15 Go" for every base; it prints the actual
+weight of the variant being loaded.
+
 ## 1.20.0 — A preset carries its base repo, and the refusal leads with the action
 
 A preset stored a `checkpoint` but not the base repo it belongs to. Since a

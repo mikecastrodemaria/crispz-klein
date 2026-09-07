@@ -295,6 +295,41 @@ def test_choosing_a_base_repo_retries_its_dimension():
     print("OK test_choosing_a_base_repo_retries_its_dimension")
 
 
+
+def test_offload_is_forced_when_the_base_cannot_fit():
+    """Le 9B pose entier sur une carte de 32 Go chargeait, puis mourait au premier pas
+    de diffusion sur 'CUDA error: unknown error' -- qui ne nomme meme pas la VRAM.
+    Une config qui ne PEUT pas marcher se corrige avant, pas apres 5 minutes."""
+    real_dev, real_total = P.DEVICE, P._total_vram_gb
+    real_off = P.OFFLOAD_MODE
+    try:
+        P.DEVICE = "cuda"
+        P.OFFLOAD_MODE = "none"
+        P.ZIMAGE_TRANSFORMER = None
+        P._BASE_DIM_CACHE["fits"] = 3072       # 4B -> 15 Go
+        P._BASE_DIM_CACHE["huge"] = 4096       # 9B -> 35 Go
+        P._total_vram_gb = lambda: 31.8        # RTX 5090
+
+        P.BASE_REPO = "fits"
+        assert P._effective_offload() == "none", "le 4B tient: on ne touche a rien"
+        P.BASE_REPO = "huge"
+        assert P._effective_offload() == "model", "le 9B ne tient pas: offload force"
+
+        # carte assez grande -> aucune correction
+        P._total_vram_gb = lambda: 80.0
+        assert P._effective_offload() == "none"
+        # variante inconnue -> on ne se mele de rien (regle maison: pas de doute agissant)
+        P._total_vram_gb = lambda: 31.8
+        P._BASE_DIM_CACHE["mystere"] = None
+        P.BASE_REPO = "mystere"
+        assert P._effective_offload() == "none"
+    finally:
+        P.DEVICE, P._total_vram_gb, P.OFFLOAD_MODE = real_dev, real_total, real_off
+        for k in ("fits", "huge", "mystere"):
+            P._BASE_DIM_CACHE.pop(k, None)
+    print("OK test_offload_is_forced_when_the_base_cannot_fit")
+
+
 def test_gated_repo_error_says_what_to_do():
     """Un 401/403 du Hub sur le 9B doit devenir une consigne, pas une trace."""
     hint = P._hf_access_hint(U.KLEIN_BASE_9B,
@@ -324,5 +359,6 @@ if __name__ == "__main__":
     test_both_base_repos_are_selectable_and_the_9b_is_announced()
     test_base_swap_refreshes_the_checkpoint_list()
     test_choosing_a_base_repo_retries_its_dimension()
+    test_offload_is_forced_when_the_base_cannot_fit()
     test_gated_repo_error_says_what_to_do()
     print("ALL OK")

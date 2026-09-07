@@ -1733,14 +1733,48 @@ def _is_gguf_path(p):
     return bool(p) and str(p).lower().endswith(".gguf")
 
 
+# VRAM que demande un repo de base pose ENTIEREMENT sur le GPU (offload 'none'),
+# par variante: transformer + encodeur texte Qwen3 + VAE, en bf16. Mesure sur les
+# poids publies. Sert a refuser une configuration qui ne tient pas AVANT de la tenter.
+_BASE_VRAM_GB = {"4B": 15.0, "9B": 35.0}
+
+
+def _base_vram_need_gb(base=None):
+    """VRAM demandee par le repo de base courant en offload 'none', ou None si la
+    variante est inconnue (auquel cas on ne se mele de rien)."""
+    return _BASE_VRAM_GB.get(_FLUX2_VARIANTS.get(_base_hidden_dim(base)))
+
+
+def _total_vram_gb():
+    try:
+        return torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
+    except Exception:
+        return None
+
+
 def _effective_offload(tpath=None):
-    """Offload REELLEMENT applique. Un transformer GGUF quantifie ne se deplace pas sur le
-    GPU via .to(cuda) ni en sequential -> seul enable_model_cpu_offload le pose sur le GPU
-    pendant le forward. On force donc 'model' pour un base GGUF, quel que soit le reglage."""
+    """Offload REELLEMENT applique.
+
+    Deux corrections d'office, chacune parce que le reglage demande ne peut PAS
+    marcher -- et parce que decouvrir l'echec coute des minutes de chargement:
+      - un transformer GGUF quantifie ne se deplace pas sur le GPU via .to(cuda) ni en
+        sequential; seul enable_model_cpu_offload le pose sur le GPU pendant le forward;
+      - un repo de base qui ne TIENT pas dans la VRAM en 'none'. Le klein-9B demande
+        ~35 Go (transformer 18,2 + encodeur Qwen3 8B 16,4): sur une carte de 32 Go il
+        chargeait, puis mourait au premier pas de diffusion sur un
+        'CUDA error: unknown error' qui ne nomme meme pas la VRAM.
+    Les deux sont journalisees par l'appelant (_ensure_base)."""
     off = OFFLOAD_MODE
     t = ZIMAGE_TRANSFORMER if tpath is None else tpath
-    if DEVICE == "cuda" and _is_gguf_path(t) and off != "model":
-        off = "model"
+    if DEVICE != "cuda":
+        return off
+    if _is_gguf_path(t) and off != "model":
+        return "model"
+    if off == "none" and not _is_single_file(t):
+        need, have = _base_vram_need_gb(), _total_vram_gb()
+        # 0.94: le contexte CUDA, les activations et le decodage VAE vivent aussi la.
+        if need and have and need > have * 0.94:
+            return "model"
     return off
 
 
@@ -2142,8 +2176,10 @@ def _ensure_base():
     kwargs = {}
     if ZIMAGE_TRANSFORMER:
         kwargs["transformer"] = _load_transformer()
-    _log(f"loading FLUX.2 Klein base: {BASE_REPO} (offload={OFFLOAD_MODE}, dtype=bf16) ... "
-         "first time downloads from HF (~15 Go for the 4B), then cached")
+    _need = _base_vram_need_gb()
+    _log(f"loading FLUX.2 Klein base: {BASE_REPO} (offload={OFFLOAD_MODE}, dtype=bf16"
+         + (f", ~{_need:.0f} GB of weights" if _need else "")
+         + ") ... first run downloads it from HF, then cached")
     try:
         pipe = _load_monitor(f"FLUX.2 Klein base {BASE_REPO}",  # noqa: E128
                              lambda: Flux2KleinPipeline.from_pretrained(BASE_REPO, torch_dtype=DTYPE,
@@ -2174,8 +2210,16 @@ def _ensure_base():
     # forward. On force donc 'model' pour un base GGUF, quel que soit le reglage UI/config.
     _off = _effective_offload()
     if _off != OFFLOAD_MODE:
-        _log(f"GGUF base: offload '{OFFLOAD_MODE}' force a '{_off}' (un GGUF ne tourne pas "
-             f"sur GPU en none/sequential -> sinon CPU, ~500s/step)")
+        if _is_gguf_path(ZIMAGE_TRANSFORMER):
+            _log(f"GGUF base: offload '{OFFLOAD_MODE}' forced to '{_off}' (a GGUF does not "
+                 f"run on the GPU in none/sequential -> it would stay on CPU, ~500s/step)")
+        else:
+            _need, _have = _base_vram_need_gb(), _total_vram_gb()
+            _log(f"offload '{OFFLOAD_MODE}' forced to '{_off}': {BASE_REPO} needs about "
+                 f"{_need:.0f} GB on the GPU and this card has {_have:.1f} GB. Loading it "
+                 f"whole would die at the first diffusion step on a CUDA error that does "
+                 f"not even name the VRAM. '{_off}' streams the weights instead -- slower "
+                 f"per image, but it runs. Set `default_cpu_offload` to silence this.")
     if DEVICE == "cuda" and _off == "model":
         pipe.enable_model_cpu_offload()
     elif DEVICE == "cuda" and _off == "sequential":
