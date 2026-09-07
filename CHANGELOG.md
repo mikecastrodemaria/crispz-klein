@@ -7,6 +7,19 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.20.2 — "50s" does not say what to optimise
+
+A render time was logged as one number. On an offloaded base that number hides
+two costs that respond to opposite levers: moving the Qwen3 text encoder and then
+the transformer across PCIe is a **fixed** price per image — fewer steps and a
+smaller canvas do not touch it — while the diffusion loop itself scales with
+both. Without the split, "it takes 50s" leads to guessing.
+
+At debug log level, `_qwen_call` now reports `phases: prompt+setup Xs |
+diffusion Ys | decode Zs` for every pipeline call — generation, edit and inpaint
+alike. A pipeline that does not accept `callback_on_step_end` loses the detail
+and runs normally.
+
 ## 1.20.1 — The 9B loaded, then died on a CUDA error that never said "VRAM"
 
 Measured on an RTX 5090 (31.8 GB usable): with `default_cpu_offload: none`, the

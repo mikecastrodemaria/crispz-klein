@@ -401,6 +401,31 @@ def _qwen_call(pipe, **kw):
         ref = img[0] if isinstance(img, (list, tuple)) else img
         kw["mask_image"] = Image.new("L", ref.size, 255)
         _dbg(f"img2img -> inpaint pipeline + masque blanc plein {ref.size}")
+    # Ventilation encode / diffusion / decode, en debug seul. Un total ("50s") ne dit
+    # pas quoi optimiser: sur un base offloade, deplacer l'encodeur Qwen3 puis le
+    # transformer coute un temps FIXE, que ni les steps ni la resolution ne reduisent.
+    # Savoir ou part le temps, c'est savoir si baisser les steps sert a quelque chose.
+    if cz_core.LOG_LEVEL >= 2 and "callback_on_step_end" not in kw:
+        marks = {"t0": time.time()}
+
+        def _mark(_pipe, i, _t, kwargs):
+            marks.setdefault("first_step", time.time())
+            marks["last_step"] = time.time()
+            return kwargs
+        kw["callback_on_step_end"] = _mark
+        try:
+            out = pipe(**kw)
+        except TypeError as e:
+            if "callback_on_step_end" not in str(e):
+                raise
+            kw.pop("callback_on_step_end", None)   # pipeline sans callback -> tant pis
+            marks.clear()
+            out = pipe(**kw)
+        if marks.get("first_step"):
+            _dbg(f"phases: prompt+setup {marks['first_step'] - marks['t0']:.1f}s | "
+                 f"diffusion {marks['last_step'] - marks['first_step']:.1f}s | "
+                 f"decode {time.time() - marks['last_step']:.1f}s")
+        return out
     try:
         return pipe(**kw)
     except TypeError as e:
