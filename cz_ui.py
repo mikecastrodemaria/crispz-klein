@@ -270,7 +270,7 @@ import cz_detailer
 from cz_pipeline import (  # noqa: E402,F401
     set_guidance, request_stop, set_zimage_model, set_zimage_transformer,
     list_checkpoints, list_loras, set_checkpoints_dir, set_checkpoints_extra_dir,
-    resolve_checkpoint, set_loras_dir, lora_keywords,
+    resolve_checkpoint, checkpoint_refusal, set_loras_dir, lora_keywords,
     set_omni_model, check_omni_available, set_offload_mode, free_vram, set_loras,
     set_sampler, SAMPLER_CHOICES, set_schedule, SCHEDULE_CHOICES, SCHEDULE_INPUTS,
     _norm_schedule, set_force_ratio,
@@ -591,6 +591,14 @@ def _perf_update(steps, guidance):
     return gr.update(value=label) if label else gr.update()
 
 
+def _current_model_label():
+    """Le modele que le PROCHAIN run utilisera: le transformer single-file s'il y en a
+    un, sinon le repo de base. Sert a dire quel modele reste en place quand une
+    selection est refusee."""
+    t = cz_pipeline.ZIMAGE_TRANSFORMER
+    return os.path.basename(str(t)) if t else str(cz_pipeline.BASE_REPO)
+
+
 def _apply_checkpoint(name):
     """Selectionne soit un repo de base officiel FLUX.2 Klein (swap complet du BASE_REPO),
     soit un checkpoint single-file local (transformer override, VAE/encoder du base repo).
@@ -608,12 +616,20 @@ def _apply_checkpoint(name):
         else:
             st, g = profile_for_model(name)
             perf_upd = _perf_update(st, g)
-        return (f"Qwen base: {name} -> {perf or 'auto'} (steps={st}, CFG={g}, reload on next run).",
+        return (f"Klein base: {name} -> {perf or 'auto'} (steps={st}, CFG={g}, reload on next run).",
                 gr.update(value=st), gr.update(value=g), perf_upd)
+    # Un checkpoint que le listage ecarte (mauvaise variante 4B/9B, LoRA egaree, GGUF
+    # d'une autre archi) ne doit PAS devenir le transformer courant: il chargerait des
+    # Go avant de mourir sur un message diffusers illisible. On refuse et on dit pourquoi.
+    why = checkpoint_refusal(name)
+    if why:
+        return (f"⚠ **{name} was NOT applied** — {why} Still using "
+                f"`{_current_model_label()}`.",
+                gr.update(), gr.update(), gr.update())
     path = resolve_checkpoint(name)
     set_zimage_transformer(path)
     st, g = profile_for_model(os.path.basename(path))
-    return (f"Qwen transformer: {os.path.basename(path)} -> auto steps={st}, CFG={g} "
+    return (f"Klein transformer: {os.path.basename(path)} -> auto steps={st}, CFG={g} "
             f"(transformer swap on next run — VAE + text encoder stay loaded).",
             gr.update(value=st), gr.update(value=g), _perf_update(st, g))
 
@@ -679,6 +695,11 @@ def _apply_transformer_repo(repo):
     if not repo:
         return ("Transformer override is empty — no change. Pick a model in 'Qwen "
                 "checkpoint' above (that also clears any override).",
+                gr.update(), gr.update(), gr.update())
+    why = checkpoint_refusal(repo)      # None pour un repo HF / dossier diffusers
+    if why:
+        return (f"⚠ **{repo} was NOT applied** — {why} Still using "
+                f"`{_current_model_label()}`.",
                 gr.update(), gr.update(), gr.update())
     set_zimage_transformer(repo)
     st, g = profile_for_model(repo)
@@ -2941,6 +2962,25 @@ def _ensure_model_presets(checkpoints):
     return created
 
 
+def _log_stale_model_presets(checkpoints):
+    """Journalise UNE ligne pour les presets qui nomment un checkpoint que le dropdown
+    ne propose plus (bibliotheque 9B sur un install 4B, modele deplace). Leur 'Load'
+    applique tout SAUF le modele; sans cette ligne, le seul signe au demarrage est
+    l'absence de signe, et l'erreur Gradio 'not in the list of choices' au moment du
+    Load ne dit pas que le modele, lui, n'a pas change."""
+    offered = set(checkpoints or []) | set(ZIMAGE_BASE_REPOS)
+    stale = []
+    for p in list_presets():
+        ck = (_load_preset_file(p) or {}).get("checkpoint")
+        if ck and ck not in offered:
+            stale.append(p)
+    if stale:
+        shown = ", ".join(stale[:6]) + ("..." if len(stale) > 6 else "")
+        _log(f"{len(stale)} preset(s) name a checkpoint this install cannot load "
+             f"({shown}): loading one applies everything EXCEPT the model, and says so.")
+    return stale
+
+
 def _ui_preset_save(name, *vals):
     """Sauve l'etat courant sous 'name'. vals = scalaires (_PRESET_KEYS) + lora_dds + lora_lws."""
     name = _preset_sanitize(name)
@@ -2961,14 +3001,30 @@ def _ui_preset_save(name, *vals):
 
 
 def _ui_preset_load(name):
-    """Renvoie les gr.update pour tous les composants (scalaires + 10 LoRA dd + 10 poids)."""
+    """Renvoie les gr.update pour tous les composants (scalaires + 10 LoRA dd + 10 poids)
+    + le statut.
+
+    Le checkpoint du preset n'est pousse QUE s'il figure encore dans les choix du
+    dropdown. Sinon le frontend Gradio refuse la valeur ("not in the list of choices"),
+    le .then qui applique le modele relit l'ANCIENNE valeur du dropdown, et le preset
+    s'appliquait entierement SAUF le modele -- en silence. C'est exactement le piege
+    des presets auto-crees avant un changement de repo de base: le reste change, le
+    modele non, et on croit que le changement de modele ne sert a rien."""
     data = _load_preset_file(name)
+    note = ""
+    ckpt = data.get("checkpoint")
+    if ckpt and ckpt not in (ZIMAGE_BASE_REPOS + list_checkpoints()):
+        why = checkpoint_refusal(ckpt) or "it is not offered by the checkpoint list any more"
+        note = (f"\n\n⚠ **Model NOT switched** — this preset asks for `{ckpt}` and {why} "
+                f"Everything else in the preset was applied; the model stays "
+                f"`{_current_model_label()}`.")
+        data = {k: v for k, v in data.items() if k != "checkpoint"}
     scal = [gr.update(value=data[k]) if k in data else gr.update() for k in _PRESET_KEYS]
     loras = data.get("loras", []) or []
     dd_up = [gr.update(value=(loras[i][0] if i < len(loras) else "None")) for i in range(MAX_LORA_SLOTS)]
     w_up = [gr.update(value=(float(loras[i][1]) if i < len(loras) else float(cz_pipeline.LORA_WEIGHT)))
             for i in range(MAX_LORA_SLOTS)]
-    return scal + dd_up + w_up
+    return scal + dd_up + w_up + [f"Preset '{name}' loaded.{note}"]
 
 
 def _ui_preset_delete(name):
@@ -3515,7 +3571,9 @@ def build_ui():
                                         "them (incl. the model). Create/Update save the current state.*")
                             # Auto-cree un preset basique par modele local avant de peupler
                             # le menu (les modeles FP8/INT8-INT4 sont deja exclus par la liste).
-                            _ensure_model_presets(list_checkpoints())
+                            _cks = list_checkpoints()
+                            _ensure_model_presets(_cks)
+                            _log_stale_model_presets(_cks)
                             with gr.Row():
                                 preset_dd = gr.Dropdown(list_presets(), label="Preset", scale=3)
                                 preset_refresh_btn = gr.Button("↻", size="sm", scale=0, min_width=44)
@@ -3975,7 +4033,7 @@ def build_ui():
                            sampler_dd, schedule_dd, image_number, ckpt_dd, transformer_tb]
         _preset_io = _preset_scalars + lora_dds + lora_lws
         preset_refresh_btn.click(lambda: gr.update(choices=list_presets()), None, [preset_dd])
-        preset_load_btn.click(_ui_preset_load, [preset_dd], _preset_io) \
+        preset_load_btn.click(_ui_preset_load, [preset_dd], _preset_io + [preset_status]) \
             .then(_ui_apply_ckpt_silent, [ckpt_dd], [ckpt_status]) \
             .then(_ui_apply_transformer_silent, [transformer_tb], [ckpt_status]) \
             .then(_apply_loras, _lora_slots, [lora_status]) \

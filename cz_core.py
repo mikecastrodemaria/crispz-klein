@@ -32,7 +32,7 @@ import torch
 from PIL import Image
 
 # Version de l'application (affichee dans le titre; entrees CHANGELOG.md par version).
-APP_VERSION = "1.18.5"
+APP_VERSION = "1.18.6"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PREFS_PATH = os.path.join(HERE, "preferences.json")
@@ -162,11 +162,21 @@ def _save_prefs_keys(updates):
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
+# Extensions d'un checkpoint single-file. Separees de _is_single_file, qui exige en
+# plus que le fichier EXISTE: sans elles, un checkpoint efface ou deplace se lit
+# comme un repo HF, et un refus ne peut plus dire "ce fichier n'est plus la".
+SINGLE_FILE_EXTS = (".safetensors", ".ckpt", ".pt", ".sft", ".gguf")
+
+
+def _looks_single_file(p):
+    """Vrai si le NOM est celui d'un checkpoint single-file, qu'il existe ou non."""
+    return bool(p) and str(p).lower().endswith(SINGLE_FILE_EXTS)
+
+
 def _is_single_file(p):
     """Vrai si p est un fichier checkpoint (ex. .safetensors Civitai, .gguf quantifie)
     plutot qu'un repo HF ou un dossier diffusers."""
-    return bool(p) and os.path.isfile(p) and p.lower().endswith(
-        (".safetensors", ".ckpt", ".pt", ".sft", ".gguf"))
+    return _looks_single_file(p) and os.path.isfile(p)
 
 
 _prefs = _load_prefs_raw()

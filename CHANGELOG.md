@@ -7,6 +7,43 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.18.6 — Loading a preset changed everything except the model
+
+Reported as "I change the model and it always uses the default one". It was true,
+and only for presets.
+
+Presets are auto-created per local checkpoint. A library of FLUX.2-klein-**9B**
+builds on a 4B install therefore leaves a pile of presets naming checkpoints that
+`list_checkpoints()` now refuses — here, 12 of 20. Loading one pushed that name
+into the checkpoint dropdown, whose choices are the 4B-only list. The Gradio
+frontend rejects a value outside `choices` (`Value: gonzalomoKlein_v10.safetensors
+is not in the list of choices: [...]`), so the dropdown kept its previous value —
+and the `.then()` that actually applies the model read *that* value back. Prompt,
+size, steps, sampler and LoRAs all applied; the model alone silently did not.
+
+- **A preset never pushes a checkpoint the dropdown does not offer.** It applies
+  everything else and says, in the preset status: which model it asked for, why
+  this install cannot load it, and which model stays active.
+- **`checkpoint_refusal(name)`** (cz_pipeline) gives the same verdict as the
+  listing but for one named file, with the full instructions — the per-file
+  reason in a listing is deliberately short because a summary follows it; a
+  refusal aimed at one file has no summary behind it.
+- **Selecting a wrong-variant checkpoint is refused instead of accepted.**
+  `_apply_checkpoint` used to set a 9B transformer and report success; the run
+  then died after reading gigabytes on `expected shape [18432, 3072], but got
+  [24576, 4096]`. Same guard on the transformer-override box.
+- **One startup line** names the presets that cannot switch the model, so the
+  count is known before clicking anything.
+- Two status messages still said "Qwen base" / "Qwen transformer", inherited
+  from the upstream fork. They say Klein.
+
+`_is_single_file()` required the file to exist, which made a moved checkpoint
+indistinguishable from an HF repo id. Split into `_looks_single_file()` (the
+name) and `_is_single_file()` (the name *and* the file), so a refusal can say
+"no such file in the checkpoint folder(s)".
+
+Regression test: `tests/test_preset_model_switch.py`.
+
 ## 1.18.5 — Hide what klein cannot do, stop advertising what it now can
 
 Two stale labels, both mine, both from the moment the catalogue was empty:

@@ -44,7 +44,7 @@ import cz_core
 from cz_core import (
     CONFIG, HERE, DEVICE, DTYPE,
     DEFAULT_TILE, DEFAULT_OVERLAP, DEFAULT_REFINE_TILE, DEFAULT_REFINE_OVERLAP,
-    _prefs, _is_single_file, _log, _dbg,
+    _prefs, _is_single_file, _looks_single_file, _log, _dbg,
 )
 
 # Modele FLUX.2 Klein de base (txt2img/img2img/inpaint/edit). Surcharge via env
@@ -719,16 +719,28 @@ def _flux2_variant_mismatch(dim, base=None):
     return f"{_variant_name(dim)}, and this build runs {_variant_name(want)}"
 
 
+def _variant_note(dim):
+    """Le rappel de licence, quand la variante ecartee est la 9B."""
+    if _FLUX2_VARIANTS.get(dim) == "9B":
+        return (" Note: FLUX.2-klein-9B is NON-COMMERCIAL, unlike the 4B "
+                "(Apache-2.0) - see FORK.md.")
+    return ""
+
+
 def _variant_skip_summary(n, dim, base=None):
     """Le mode d'emploi, une seule fois pour les n fichiers ecartes."""
     want = _base_hidden_dim(base)
-    line = (f"{n} checkpoint(s) skipped: they are {_variant_name(dim)} builds and this "
+    return (f"{n} checkpoint(s) skipped: they are {_variant_name(dim)} builds and this "
             f"install runs {_variant_name(want)} ({base or BASE_REPO}). To use them, "
-            f"point '{CFG_MODEL_KEY}' at the matching base repo.")
-    if _FLUX2_VARIANTS.get(dim) == "9B":
-        line += (" Note: FLUX.2-klein-9B is NON-COMMERCIAL, unlike the 4B "
-                 "(Apache-2.0) - see FORK.md.")
-    return line
+            f"point '{CFG_MODEL_KEY}' at the matching base repo." + _variant_note(dim))
+
+
+def _variant_refusal(dim, base=None):
+    """Le meme mode d'emploi, pour UN fichier qu'on vient d'essayer de selectionner."""
+    want = _base_hidden_dim(base)
+    return (f"it is a {_variant_name(dim)} build and this install runs "
+            f"{_variant_name(want)} ({base or BASE_REPO}); point '{CFG_MODEL_KEY}' at "
+            f"the matching base repo to use it." + _variant_note(dim))
 
 
 def _safetensors_unsupported(path):
@@ -1301,6 +1313,41 @@ def list_checkpoints():
     for dim, n in sorted(variant_skips.items()):
         _log(_variant_skip_summary(n, dim))
     return sorted(out)
+
+
+def checkpoint_refusal(name):
+    """Raison (str) pour laquelle CE checkpoint n'est pas selectionnable, sinon None.
+
+    Meme verdict que list_checkpoints, mais pour un seul fichier et avec le mode
+    d'emploi complet: c'est ce que lit quelqu'un qui essaie de choisir ce modele-la
+    et pas un autre (preset ecrit avant un changement de repo de base, checkpoint
+    deplace, GGUF d'une autre archi). None pour un repo HF / dossier diffusers:
+    seuls les fichiers single-file passent par ce filtre."""
+    if not name:
+        return None
+    path = name if os.path.isabs(name) else resolve_checkpoint(name)
+    if not _looks_single_file(path):
+        return None
+    if not os.path.isfile(path):
+        return (f"no such file in the checkpoint folder(s) "
+                f"({', '.join(_checkpoint_dirs())})")
+    if _is_gguf_path(path):
+        dim = _gguf_hidden_dim(path)
+        if _flux2_variant_mismatch(dim):
+            return _variant_refusal(dim)
+        lay, arch = _gguf_layout(path), _gguf_arch(path)
+        if lay == "foreign":
+            return _gguf_layout_unsupported(path)
+        # Comme dans list_checkpoints: le layout prime sur l'archi declaree.
+        if lay != "flux2" and arch and arch not in GGUF_ARCHS:
+            return (f"its GGUF architecture is '{arch}' and this build only loads "
+                    f"{sorted(GGUF_ARCHS)}; that model needs its own pipeline and "
+                    f"text encoder/VAE")
+        return None
+    dim = _flux2_hidden_dim(path)
+    if _flux2_variant_mismatch(dim):
+        return _variant_refusal(dim)
+    return _safetensors_unsupported(path)
 
 
 def resolve_checkpoint(name):
