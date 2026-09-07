@@ -7,6 +7,31 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.22.1 — Leftovers from the parent model, in places that matter
+
+A global grep for `qwen` and `z-image` outside the lineage notes. Most hits were
+legitimate — the Qwen3 text encoder is real, `_qwen_call` keeps its name on
+purpose to limit merge conflicts, `cz_edit_loras.py` documents an incompatible
+Qwen catalogue — but some were plainly wrong:
+
+- **`boot_check.bat` tested for `ZImagePipeline`**, so it reported *"ZImage
+  pipelines indisponibles → lance install.bat"* on every healthy klein install.
+  It checks the FLUX.2 Klein pipelines now.
+- **Folder placeholders** offered `D:\models\Qwen` and
+  `F:\sdlibs\models\Lora\_Qwen` as examples.
+- Comments describing the wrong model: *"Modele Z-Image courant"*, *"le pipeline
+  Z-Image impose un schedule sigmas"*, *"txt2img ZImagePipeline"*, *"sweet spot
+  Qwen"*, *"Marqueurs de cles du transformer Qwen-Image"*, and an offload note
+  reasoning about a 20B Qwen-Image — replaced by the real one: the 4B fits, the
+  9B does not, and `_effective_offload` corrects it up front.
+- *"LoRA d'EDITION (pipe omni / Qwen-Image-Edit)"* described a separate edit
+  model klein does not have — its editing runs in the same pipeline.
+
+Kept on purpose: every mention that explains the legacy (`zimage_*` config keys
+still read, the Refine-steps slider inherited from Z-Image, the Qwen-Image-Edit
+presets that cannot load here) and the Qwen2.5-VL guard, which names a file the
+user might actually drop in the checkpoints folder.
+
 ## 1.22.0 — An empty Models tab, and a text encoder moved once per hand
 
 **The Asset Browser showed nothing.** Its catalogue scanned only the *main*

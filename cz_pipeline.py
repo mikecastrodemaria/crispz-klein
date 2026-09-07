@@ -68,7 +68,7 @@ if DEVICE == "cuda":
         pass
 
 
-# Modele Z-Image courant. Un repo HF / dossier diffusers -> BASE_REPO. Un fichier
+# Modele FLUX.2 Klein courant. Un repo HF / dossier diffusers -> BASE_REPO. Un fichier
 # single-file (.safetensors Civitai) passe comme "modele" -> transformer override
 # (le VAE et l'encodeur Qwen3 restent tires du repo de base).
 # Clefs de config/env. Les noms 'zimage_*' sont des vestiges de crispz-studio
@@ -110,7 +110,7 @@ if _is_single_file(_zmodel):
 else:
     BASE_REPO = _zmodel
 
-# Dossiers de modeles Z-Image: checkpoints single-file a switcher + LoRA a appliquer.
+# Dossiers de modeles: checkpoints single-file a switcher + LoRA a appliquer.
 CHECKPOINTS_DIR = (os.environ.get("CHECKPOINTS_DIR") or _prefs.get("checkpoints_dir")
                    or CONFIG.get("checkpoints_dir") or os.path.join(HERE, "checkpoints"))
 # Dossier checkpoints supplementaire (optionnel) -> fusionne avec CHECKPOINTS_DIR dans
@@ -206,7 +206,7 @@ for _spec in (CONFIG.get("default_loras") or []):
 # pour que cz_ui / cz_protocol gardent leur contrat (toujours non vide -> edit dispo).
 OMNI_MODEL = BASE_REPO
 
-# Caches process-wide. Un pipeline "base" (txt2img ZImagePipeline) detient les
+# Caches process-wide. Un pipeline "base" (txt2img Flux2KleinPipeline) detient les
 # composants; img2img / inpaint en derivent via from_pipe -> poids partages, pas de
 # VRAM en double. Clef de cache = (BASE_REPO, ZIMAGE_TRANSFORMER, OFFLOAD_MODE, LORAS).
 _BASE_PIPE = None
@@ -215,8 +215,9 @@ _LOADED_KEY = None
 # LoRA reellement posees sur _BASE_PIPE (liste de (chemin, poids)). Sert a echanger les
 # LoRA a chaud sans recharger le modele: si ca diverge de LORAS, _apply_loras resynchronise.
 _APPLIED_LORAS = []
-# LoRA d'EDITION (pipe omni / Qwen-Image-Edit): jeu SEPARE du base, car le transformer
-# d'edition est un autre modele (les presets cz_edit_loras visent 2509/2511). Meme
+# LoRA d'EDITION: jeu SEPARE du base. Sur klein l'edition passe par le MEME pipeline
+# (multi-reference natif), mais les LoRA d'edition restent un jeu distinct, pose et
+# retire autour d'un appel edit sans toucher aux LoRA de generation. Meme
 # format (chemin, poids). EDIT_LORAS_ENABLED = la case "Edit LoRAs" de l'UI: OFF -> le
 # jeu est memorise mais pas pose (permet de comparer avec/sans en un clic).
 EDIT_LORAS = []
@@ -231,8 +232,9 @@ EDIT_SPEED = None
 # Palier 2 (cohabitation VRAM): offload CPU de la passe diffusion. none = tout en VRAM.
 # model = decharge par sous-module (bon compromis). sequential = plus agressif, plus lent.
 # N'est PAS de la quantif: les poids restent BF16, ils transitent RAM <-> GPU.
-# Qwen-Image est gros (~20B) : on initialise depuis la config (default_cpu_offload, defaut
-# 'model' pour ce fork) ou l'env CZ_OFFLOAD -> offload actif DES le 1er chargement (anti-OOM).
+# klein-4B tient en VRAM (~15 Go) mais le 9B non (~35 Go): on initialise depuis la config
+# (default_cpu_offload) ou l'env CZ_OFFLOAD, et _effective_offload corrige d'office quand
+# le repo de base ne tient pas -> pas d'OOM decouvert apres des minutes de chargement.
 OFFLOAD_CHOICES = ("none", "model", "sequential")
 OFFLOAD_MODE = (os.environ.get("CZ_OFFLOAD") or CONFIG.get("default_cpu_offload") or "none")
 if OFFLOAD_MODE not in OFFLOAD_CHOICES:
@@ -263,7 +265,7 @@ try:
 except Exception:
     EXTEND_DENOISE = 0.22
 
-# Sampler / scheduler. Le pipeline Z-Image impose un schedule `sigmas` custom: seuls
+# Sampler / scheduler. Le pipeline FLUX.2 impose un schedule `sigmas` custom: seuls
 # les schedulers dont set_timesteps accepte `sigmas` fonctionnent. En pratique -> Euler
 # flow-matching (natif, defaut), UniPC (multistep) et LCM flow-matching (interessant sur
 # les modeles distilles/Turbo: peu de steps, guidance ~0-1).
@@ -274,7 +276,7 @@ SAMPLER = (os.environ.get("ZIMAGE_SAMPLER") or CONFIG.get("default_sampler") or 
 if SAMPLER not in SAMPLER_CHOICES:
     SAMPLER = "euler"
 
-# Schedule de sigmas (= le "scheduler" facon ComfyUI). sgm_uniform = natif Z-Image
+# Schedule de sigmas (= le "scheduler" facon ComfyUI). sgm_uniform = natif FLUX.2
 # (linspace + dynamic shift). beta/karras/exponential = re-mapping des sigmas applique
 # PAR-DESSUS le schedule du pipeline (FlowMatchEuler/UniPC: use_*_sigmas). beta -> scipy.
 SCHEDULE_CHOICES = ("sgm_uniform", "beta", "karras", "exponential")
@@ -501,7 +503,7 @@ def _qwen_call(pipe, **kw):
 
 
 def _scheduler_accepts_sigmas(sched):
-    """Le pipeline Z-Image appelle set_timesteps(..., sigmas=<schedule custom>). Un
+    """Le pipeline FLUX.2 appelle set_timesteps(..., sigmas=<schedule custom>). Un
     scheduler dont set_timesteps n'accepte pas `sigmas` plante a la generation."""
     import inspect
     try:
@@ -545,7 +547,7 @@ def _apply_sampler(pipe):
     try:
         sched = _build_scheduler(SAMPLER, SCHEDULE, _BASE_SCHED_CONFIG)
         if not _scheduler_accepts_sigmas(sched):
-            raise ValueError(f"{type(sched).__name__} n'accepte pas les sigmas custom de Z-Image")
+            raise ValueError(f"{type(sched).__name__} n'accepte pas les sigmas custom de FLUX.2")
         pipe.scheduler = sched
         _dbg(f"sampler applied: {SAMPLER}/{SCHEDULE} -> {type(pipe.scheduler).__name__}")
     except Exception as e:
@@ -949,7 +951,7 @@ def _safetensors_dequant(path):
     return None
 
 
-# Marqueurs de cles du transformer Qwen-Image (layout original OU prefixe ComfyUI):
+# Marqueurs de cles du transformer FLUX.2 (layout original OU prefixe ComfyUI):
 # utilises par le loader dequant pour refuser un checkpoint quantifie d'une AUTRE
 # architecture (il chargerait des poids incoherents).
 # Marqueurs de cles propres a Flux2Transformer2DModel (releves sur le transformer de

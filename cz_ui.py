@@ -3835,7 +3835,7 @@ def build_ui():
                             ckpt_extra_dir_tb = gr.Textbox(
                                 value=cz_pipeline.CHECKPOINTS_EXTRA_DIR,
                                 label="Extra checkpoints folder (optional)",
-                                placeholder="e.g. D:\\models\\Qwen",
+                                placeholder="e.g. D:\\models\\FLUX.2",
                                 info="Merged into the single 'Klein checkpoint' list above. Leave empty to disable.")
                             esrgan_dir_tb = gr.Textbox(value=cz_esrgan.ESRGAN_DIR,
                                                        label="ESRGAN_DIR (.pth/.safetensors folder)")
@@ -3872,7 +3872,7 @@ def build_ui():
                             lora_extra_dirs_tb = gr.Textbox(
                                 value=";".join(cz_pipeline.LORAS_EXTRA_DIRS),
                                 label="Extra LoRA folders (optional, ';' separated)",
-                                placeholder="e.g. F:\\sdlibs\\models\\Lora\\_Qwen",
+                                placeholder="e.g. F:\\sdlibs\\models\\Lora\\_FLUX2",
                                 info="Merged into the LoRA lists (slots, edit presets, "
                                      "protocol caps). Same file name: the main folder wins. "
                                      "Config `loras_extra_dirs`.")

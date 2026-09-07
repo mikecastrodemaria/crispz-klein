@@ -93,8 +93,8 @@ if "!HW!"=="2" echo    [AVERT] Mode CPU: la generation sera tres lente.
 
 REM --- 4. Pipeline diffusers de cette famille de modele ---
 echo [4/5] diffusers...
-!RUNPY! -c "from diffusers import ZImagePipeline, ZImageImg2ImgPipeline; print('    ZImage pipelines OK')" 2>nul
-if errorlevel 1 echo    [ATTENTION] ZImage pipelines indisponibles -^> lance install.bat / update.bat.
+!RUNPY! -c "from diffusers import Flux2KleinPipeline, Flux2KleinInpaintPipeline; print('    FLUX.2 Klein pipelines OK')" 2>nul
+if errorlevel 1 echo    [ATTENTION] FLUX.2 Klein pipelines indisponibles -^> lance install.bat / update.bat.
 echo.
 
 REM --- 5. Modeles: on lit les VRAIS dossiers de la config, pas un chemin en dur ---

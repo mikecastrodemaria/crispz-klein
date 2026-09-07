@@ -2,7 +2,7 @@
 
 Apres un rendu, detecte les visages (insightface buffalo_l, deja charge pour le Face
 Swap) et repasse CHAQUE visage en img2img a haute resolution :
-  crop elargi (+60%) -> agrandi au sweet spot du modele (~832 px) -> refine Qwen
+  crop elargi (+60%) -> agrandi au sweet spot du modele (~832 px) -> refine
   (denoise modere, meme seed/prompt) -> reduit -> recolle avec un masque elliptique
   feather (comme le collage GFPGAN du Face Swap: pas de bord carre).
 
@@ -24,7 +24,7 @@ _MAX_FACES = max(1, int(CONFIG.get("face_detailer_max_faces", 4)))
 # dans le crop -- constate: un prompt 'pancarte CRISPZ STUDIO' a ecrit le texte SUR
 # les joues du visage refine. Vide, l'img2img n'affine que le visage source.
 _FACE_PROMPT = str(CONFIG.get("face_detailer_prompt", ""))
-_TARGET = 832      # cote de travail du crop (sweet spot Qwen, /32)
+_TARGET = 832      # cote de travail du crop (sweet spot du modele, /32)
 _MARGIN = 0.6      # expansion de la bbox visage (contexte: cheveux, cou)
 _MIN_FACE = 28     # px: en-dessous, trop petit pour gagner quoi que ce soit
 
