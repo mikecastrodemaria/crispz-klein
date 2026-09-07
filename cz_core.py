@@ -32,7 +32,7 @@ import torch
 from PIL import Image
 
 # Version de l'application (affichee dans le titre; entrees CHANGELOG.md par version).
-APP_VERSION = "1.19.0"
+APP_VERSION = "1.19.1"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PREFS_PATH = os.path.join(HERE, "preferences.json")
@@ -206,8 +206,20 @@ def set_hf_token(token):
 
 
 def hf_token_is_set():
-    """Vrai si un token HF est actif dans l'environnement courant."""
-    return bool((os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or "").strip())
+    """Vrai si un token HF sera effectivement envoye au Hub.
+
+    Pas seulement l'environnement: `huggingface-cli login` ecrit un token dans le
+    cache HF, et huggingface_hub s'en sert tout seul. Ne regarder que HF_TOKEN
+    faisait dire "aucun token" a quelqu'un qui en avait un -- et l'envoyait chercher
+    la mauvaise cause devant un repo gated (c'est la LICENCE qui n'est pas acceptee,
+    pas le token qui manque)."""
+    if (os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or "").strip():
+        return True
+    try:
+        from huggingface_hub import get_token
+        return bool(get_token())
+    except Exception:
+        return False
 
 
 _apply_hf_token(os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")

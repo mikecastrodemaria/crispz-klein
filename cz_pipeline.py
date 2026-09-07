@@ -2071,11 +2071,15 @@ def _hf_access_hint(repo, err):
     if not any(k in s for k in ("Gated", "gated", "401", "403", "restricted",
                                 "awaiting a review", "Access to model")):
         return None
-    tok = ("A read token IS set." if cz_core.hf_token_is_set()
-           else "No Hugging Face token is set right now (config 'hf_token').")
-    return (f"Hugging Face refused access to {repo}. That repo is gated: accept its "
-            f"licence at https://huggingface.co/{repo} with your account, then set a "
-            f"READ token. {tok} Original error -- {s}")
+    if cz_core.hf_token_is_set():
+        tok = ("A token IS being sent, so the missing piece is almost certainly the "
+               "licence itself -- or the token belongs to another account.")
+    else:
+        tok = ("No token is being sent: set one (config 'hf_token', or "
+               "'huggingface-cli login') with the SAME account that accepts the licence.")
+    return (f"Hugging Face refused access to {repo}. That repo is gated: open "
+            f"https://huggingface.co/{repo} and accept its licence. {tok} "
+            f"Original error -- {s}")
 
 
 def _ensure_base():

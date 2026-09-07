@@ -7,6 +7,16 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.19.1 — "No token is set" was wrong for anyone who used huggingface-cli login
+
+`hf_token_is_set()` only looked at `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`, but
+`huggingface-cli login` writes its token to the HF cache and `huggingface_hub`
+sends it on its own. So the gated-repo message told a logged-in user that no
+token was set — pointing them at the wrong cause, when the missing piece is the
+**licence acceptance** on the model page. It now reads the effective token, and
+the message splits the two cases: token present → it is the licence (or the
+token belongs to another account); no token → set one with the same account.
+
 ## 1.19.0 — Pick 4B or 9B from the dropdown, per project
 
 The 4B/9B guard was already relative to the base repo, so switching variants only

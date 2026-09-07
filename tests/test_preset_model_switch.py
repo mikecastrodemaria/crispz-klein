@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 from safetensors.torch import save_file
 
+import cz_core
 import cz_pipeline as P
 import cz_ui as U
 
@@ -196,6 +197,14 @@ def test_gated_repo_error_says_what_to_do():
                              RuntimeError("401 Client Error: Access to model ... is restricted"))
     assert hint and U.KLEIN_BASE_9B in hint, hint
     assert "accept its licence" in hint and "token" in hint, hint
+    # un token pose par 'huggingface-cli login' compte: dire "aucun token" a
+    # quelqu'un qui en a un l'envoie chercher la mauvaise cause.
+    real, cz_core.hf_token_is_set = cz_core.hf_token_is_set, lambda: True
+    try:
+        with_tok = P._hf_access_hint(U.KLEIN_BASE_9B, RuntimeError("403 gated"))
+    finally:
+        cz_core.hf_token_is_set = real
+    assert "licence itself" in with_tok, with_tok
     # une panne ordinaire ne doit PAS etre maquillee en probleme de licence
     assert P._hf_access_hint(U.KLEIN_BASE_9B, OSError("disk full")) is None
     print("OK test_gated_repo_error_says_what_to_do")
