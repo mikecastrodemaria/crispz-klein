@@ -463,7 +463,22 @@ def _qwen_call(pipe, **kw):
             distilled = bool(getattr(pipe.config, "is_distilled", False))
         except Exception:
             distilled = True
-        kw["guidance_scale"] = 1.0 if distilled else float(GUIDANCE)
+        want = float(GUIDANCE)
+        # `is_distilled` decrit le REPO DE BASE, pas le transformer charge. Avec un
+        # override single-file, il ne dit plus rien du modele qui calcule: des
+        # checkpoints communautaires sont explicitement NON distilles ("undistilled,
+        # use with Turbo LoRA") et exigent une vraie CFG + beaucoup plus de steps.
+        # Les forcer a 1.0 rendait une bouillie floue, sans un mot. Si l'utilisateur
+        # a monte la guidance ET charge un override, on la transmet: sur le repo de
+        # base on sait que c'est inerte (mesure bit-a-bit), sur son checkpoint non.
+        if distilled and want > 1.0 and ZIMAGE_TRANSFORMER:
+            _log(f"guidance {want:g} transmise: le transformer est un checkpoint "
+                 f"single-file ({os.path.basename(str(ZIMAGE_TRANSFORMER))}), le "
+                 f"drapeau 'distille' du repo de base ne le decrit pas. Un modele "
+                 f"distille l'ignorera; un modele 'undistilled' en a besoin.")
+            kw["guidance_scale"] = want
+        else:
+            kw["guidance_scale"] = 1.0 if distilled else want
     if "strength" in kw and kw.get("image") is not None and "mask_image" not in kw:
         img = kw["image"]
         ref = img[0] if isinstance(img, (list, tuple)) else img

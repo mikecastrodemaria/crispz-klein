@@ -7,6 +7,29 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.23.0 — An "undistilled" checkpoint had no way to get its CFG
+
+klein-4B and 9B are step-wise distilled: guidance is inert there, measured
+bit-identical from 1.0 to 8.0, so `_qwen_call` forces `guidance_scale=1.0`. But
+that decision read `pipe.config.is_distilled`, which describes the **base repo** —
+not the transformer actually loaded.
+
+Load a community checkpoint that says *"undistilled — use with Turbo Lora"* and
+the app still forced 1.0 and 4 steps. The result is a smooth, smeared image with
+no detail, and nothing in the log to explain it: the guidance slider was moved,
+and silently discarded.
+
+With a **single-file override** loaded, a guidance above 1.0 is now passed
+through, and said so in the log. On the base repo nothing changes — there we know
+it is inert. A distilled third-party checkpoint will ignore the value the way
+diffusers always did; an undistilled one finally gets what it needs.
+
+This does not make such a model good at 4 steps: undistilled means more steps too
+(`model_profiles` in `config.txt` takes a substring rule, e.g. `"undistilled":
+{"steps": 28, "guidance": 3.5}`), or the Turbo LoRA its author points at.
+
+Regression test: `tests/test_undistilled_guidance.py`.
+
 ## 1.22.2 — The embed cache, generalised for the family
 
 Porting the cache to the siblings showed the klein version was too narrow: it
