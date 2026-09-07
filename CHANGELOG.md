@@ -54,8 +54,19 @@ whenever the pipeline is freed — an embedding from another encoder would be
 wrong. Any failure falls back to passing the prompt through: a cache must never
 cost a render. `prompt_embed_cache: 0` disables it.
 
-The gain is not measured here — the GPU was in use. The debug line
-`prompt embeds reused (text encoder not touched)` tells you when it hits.
+**Measured** (RTX 5090, 1024×1024, 2 hands, same seed, cache OFF / ON / OFF to
+absorb drift):
+
+| | prompt+setup per pass | per hand | |
+|---|---|---|---|
+| klein-9B GGUF, offload `model` | 5.2–6.1 s → **1.7–1.8 s** | 7.5 s → **3.6 s** | **2.1×** |
+| klein-4B, offload `none` | 0.5 s → 0.4 s | 1.05 s → 0.97 s | 1.08× |
+
+The split is the proof: `diffusion` never moves (0.3 s), only `prompt+setup` does.
+On the 4B the encoder is already resident — there is nothing to avoid moving, and
+the cache is worth ~8 %. It pays exactly where the weights travel.
+
+Combined with 1.21.0, a hand on the 9B went from **12.2 s to 3.6 s**.
 
 Regression tests: `tests/test_asset_browser_dirs.py`,
 `tests/test_prompt_embed_cache.py`.
