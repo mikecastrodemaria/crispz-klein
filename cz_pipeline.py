@@ -725,6 +725,30 @@ def _flux2_variant_mismatch(dim, base=None):
     return f"{_variant_name(dim)}, and this build runs {_variant_name(want)}"
 
 
+def _variant_repo(dim):
+    """Le repo de base officiel de cette variante, ou None si elle est inconnue.
+    Nommer le repo exact vaut mieux que "le repo correspondant": c'est la valeur a
+    choisir dans le dropdown, mot pour mot."""
+    v = _FLUX2_VARIANTS.get(dim)
+    return f"black-forest-labs/FLUX.2-klein-{v}" if v else None
+
+
+def _variant_fix(dim):
+    """Quoi faire pour utiliser cette variante. Le dropdown d'abord: c'est de la que
+    vient le refus, et y renvoyer quelqu'un vers un fichier de config alors qu'un
+    menu fait le travail, c'est le renvoyer au mauvais endroit."""
+    repo = _variant_repo(dim)
+    if not repo:
+        return f"point '{CFG_MODEL_KEY}' at the matching base repo."
+    line = (f"switch the base model to {repo} (the 'Klein checkpoint' dropdown, or "
+            f"config '{CFG_MODEL_KEY}').")
+    if _FLUX2_VARIANTS.get(dim) == "9B":
+        line += (f" Heads-up: that repo is NON-COMMERCIAL (the 4B is Apache-2.0) and "
+                 f"GATED - accept its licence at https://huggingface.co/{repo} first, "
+                 f"and it needs ~29 GB of VRAM. See FORK.md.")
+    return line
+
+
 def _variant_note(dim):
     """Le rappel de licence, quand la variante ecartee est la 9B."""
     if _FLUX2_VARIANTS.get(dim) == "9B":
@@ -738,15 +762,15 @@ def _variant_skip_summary(n, dim, base=None):
     want = _base_hidden_dim(base)
     return (f"{n} checkpoint(s) skipped: they are {_variant_name(dim)} builds and this "
             f"install runs {_variant_name(want)} ({base or BASE_REPO}). To use them, "
-            f"point '{CFG_MODEL_KEY}' at the matching base repo." + _variant_note(dim))
+            + _variant_fix(dim))
 
 
 def _variant_refusal(dim, base=None):
     """Le meme mode d'emploi, pour UN fichier qu'on vient d'essayer de selectionner."""
     want = _base_hidden_dim(base)
     return (f"it is a {_variant_name(dim)} build and this install runs "
-            f"{_variant_name(want)} ({base or BASE_REPO}); point '{CFG_MODEL_KEY}' at "
-            f"the matching base repo to use it." + _variant_note(dim))
+            f"{_variant_name(want)} ({base or BASE_REPO}). To use it, "
+            + _variant_fix(dim))
 
 
 def _safetensors_unsupported(path):

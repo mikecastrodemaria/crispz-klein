@@ -68,6 +68,12 @@ def test_refusal_names_the_reason_and_the_fix():
         # contrairement au listage, il n'y a pas de resume derriere pour le dire.
         assert P.CFG_MODEL_KEY in why, why
         assert "NON-COMMERCIAL" in why, why
+        # le refus doit nommer le repo EXACT a choisir et l'endroit ou le choisir:
+        # renvoyer vers "le repo correspondant" et un fichier de config, alors qu'un
+        # dropdown fait le travail, c'est renvoyer au mauvais endroit.
+        assert "black-forest-labs/FLUX.2-klein-9B" in why, why
+        assert "Klein checkpoint" in why, why
+        assert "GATED" in why and "licence" in why, why
         # un repo HF / dossier diffusers ne passe pas par ce filtre
         assert P.checkpoint_refusal("black-forest-labs/FLUX.2-klein-4B") is None
         # un nom qui n'existe plus sur le disque doit se dire, pas se taire

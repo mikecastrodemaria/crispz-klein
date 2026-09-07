@@ -7,6 +7,18 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.19.2 — A refusal should name the menu, not the config file
+
+Refusing a wrong-variant checkpoint said *"point 'klein_model' at the matching
+base repo"* — an instruction written when editing `preferences.json` was the only
+way to change variant. Since 1.19.0 a dropdown does it, so that sentence sends
+you to the wrong place, and "the matching base repo" makes you guess the name.
+
+The refusal now names the exact repo to pick and where to pick it, and for the 9B
+it adds what you will hit two seconds later anyway: the repo is **gated** (accept
+the licence, with the link), non-commercial, and wants ~29 GB of VRAM. Same
+sentence in the per-listing summary.
+
 ## 1.19.1 — "No token is set" was wrong for anyone who used huggingface-cli login
 
 `hf_token_is_set()` only looked at `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`, but
