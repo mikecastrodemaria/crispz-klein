@@ -124,10 +124,83 @@ def test_file_without_signature_is_not_filtered():
     print("OK test_file_without_signature_is_not_filtered")
 
 
+# ---------------------------------------------------------------------------
+# Cote LoRA. Une LoRA ne contient aucun poids du modele -- mais ses deux matrices en
+# gardent la trace: lora_A a la forme [rang, entree], lora_B [sortie, rang]. Sur une
+# projection dont l'entree EST la dimension cachee, la forme la donne donc.
+# Sans cette garde, une LoRA 4B posee sur une base 9B faisait deverser a peft quarante
+# lignes de "size mismatch ... torch.Size([27648, 128]) ... torch.Size([36864, 128])",
+# ou rien ne dit que 27648 = 9 x 3072, donc 4B. Releve en vrai sur une LoRA d'EDITION,
+# qui faisait echouer toute l'edition sans jamais nommer la cause.
+# ---------------------------------------------------------------------------
+
+def _lora(name, dim, rank=128):
+    """Fausse LoRA FLUX.2: seules les formes comptent."""
+    p = os.path.join(TMP, name)
+    save_file({
+        "transformer.transformer_blocks.0.attn.to_q.lora_A.weight": torch.zeros(rank, dim),
+        "transformer.transformer_blocks.0.attn.to_q.lora_B.weight": torch.zeros(dim, rank),
+        "transformer.single_transformer_blocks.0.attn.to_qkv_mlp_proj.lora_A.weight":
+            torch.zeros(rank, dim),
+        "transformer.single_transformer_blocks.0.attn.to_out.lora_B.weight":
+            torch.zeros(dim, rank),
+    }, p)
+    return p
+
+
+def test_a_lora_declares_its_variant_through_its_shapes():
+    for label, dim in DIMS.items():
+        p = _lora(f"lora_{label}.safetensors", dim)
+        assert P._flux2_lora_hidden_dim(p) == dim, (label, P._flux2_lora_hidden_dim(p))
+    print("OK test_a_lora_declares_its_variant_through_its_shapes")
+
+
+def test_a_4B_lora_on_a_9B_base_is_refused_in_one_sentence():
+    old = P.BASE_REPO
+    P.BASE_REPO = "test-only/FLUX.2-klein-9B"
+    P._BASE_DIM_CACHE[P.BASE_REPO] = 4096
+    try:
+        why = P._lora_unsupported(_lora("lora_4B_on_9B.safetensors", 3072))
+        assert why, "une LoRA 4B doit etre refusee sur une base 9B"
+        assert "4B" in why and "9B" in why, why
+        assert "3072" in why and "4096" in why, why      # les deux nombres, nommes
+        assert "switch the base model" in why, why       # et quoi faire
+        # controle: la bonne variante passe
+        assert P._lora_unsupported(_lora("lora_9B_on_9B.safetensors", 4096)) is None
+    finally:
+        P.BASE_REPO = old
+    print("OK test_a_4B_lora_on_a_9B_base_is_refused_in_one_sentence")
+
+
+def test_a_lora_without_a_signature_is_never_filtered():
+    """On ne connait pas toutes les LoRA du monde: sans signature reconnue, on ne
+    filtre PAS. Ecarter une LoRA valide serait pire que le message qu'on remplace."""
+    p = os.path.join(TMP, "lora_exotic.safetensors")
+    save_file({"some.other.arch.lora_A.weight": torch.zeros(8, 999),
+               "some.other.arch.lora_B.weight": torch.zeros(999, 8)}, p)
+    assert P._flux2_lora_hidden_dim(p) is None
+    assert P._lora_unsupported(p) is None
+    print("OK test_a_lora_without_a_signature_is_never_filtered")
+
+
+def test_a_lokr_has_no_lora_signature():
+    """Un LoKr n'a ni lora_A ni lora_B: la garde de variante doit le laisser passer,
+    c'est la fusion (_merge_lokr) qui le prend en charge."""
+    p = os.path.join(TMP, "lokr_no_sig.safetensors")
+    save_file({f"diffusion_model.double_blocks.{i}.img_attn.proj.lokr_w{j}":
+               torch.zeros(4, 4) for i in range(3) for j in (1, 2)}, p)
+    assert P._flux2_lora_hidden_dim(p) is None
+    print("OK test_a_lokr_has_no_lora_signature")
+
+
 if __name__ == "__main__":
     for fn in (test_hidden_dim_read_from_header, test_mismatch_is_refused_both_ways,
                test_summary_carries_the_instructions_once,
                test_unknown_base_never_discards, test_bogus_shape_is_not_taken_for_a_hidden_dim,
-               test_file_without_signature_is_not_filtered):
+               test_file_without_signature_is_not_filtered,
+               test_a_lora_declares_its_variant_through_its_shapes,
+               test_a_4B_lora_on_a_9B_base_is_refused_in_one_sentence,
+               test_a_lora_without_a_signature_is_never_filtered,
+               test_a_lokr_has_no_lora_signature):
         fn()
     print("All 4B/9B variant tests passed.")

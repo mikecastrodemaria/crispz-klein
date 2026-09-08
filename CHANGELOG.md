@@ -7,6 +7,38 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.27.1 — A LoRA for the wrong variant, said in one sentence
+
+Selecting a 4B checkpoint while the base repo is the 9B leaves the base on 9B — the
+checkpoint guard refuses the mismatch, correctly. But the *edit LoRA* had no such
+guard, so a 4B one went straight to peft, which answered with forty lines of:
+
+```
+size mismatch for single_transformer_blocks.11.attn.to_qkv_mlp_proj.lora_B...:
+copying a param with shape torch.Size([27648, 128]) from checkpoint,
+the shape in current model is torch.Size([36864, 128]).
+```
+
+Nothing in there says that 27648 = 9 x 3072 and 36864 = 9 x 4096, so nothing says
+**4B against 9B** — the one fact that explains it. The edit then failed entirely with
+"nothing was generated" and no usable cause.
+
+A LoRA carries no model weights, but its two matrices keep the trace: `lora_A` has
+shape `[rank, in]`, `lora_B` `[out, rank]`. On a projection whose input *is* the hidden
+size, the shape gives it away — read from the header, no weights loaded. The refusal
+now names both variants, both numbers, and which dropdown to change, exactly like the
+checkpoint refusal it mirrors.
+
+Deliberately conservative: only a dimension declared in `_FLUX2_VARIANTS` counts, and
+anything without a recognised signature is **never** filtered. Discarding a valid LoRA
+would be worse than the error message this replaces. A LoKr has neither `lora_A` nor
+`lora_B`, so it passes through untouched to the merge path.
+
+An unusable *edit* LoRA now raises before peft rather than being skipped: this fork's
+rule is that editing without a requested preset is a false result, not a degraded one.
+
+Regression tests in `tests/test_klein_variant.py`.
+
 ## 1.27.0 — LoKr, merged into the weights
 
 1.26.3 stopped a LyCORIS from failing silently. This applies it.

@@ -802,6 +802,58 @@ def _flux2_hidden_dim(path):
         (k, v.get("shape")) for k, v in hdr.items() if k != "__metadata__")
 
 
+# Signatures de dimension COTE LoRA. Une LoRA ne contient aucun poids du modele, mais
+# ses deux matrices en gardent la trace: lora_A projette DEPUIS l'entree de la couche
+# (forme [rang, entree]), lora_B VERS sa sortie ([sortie, rang]). Sur les projections
+# dont l'entree -- ou la sortie -- EST la dimension cachee, la forme la donne donc
+# directement, sans lire un seul poids.
+_FLUX2_LORA_IN_SIGS = ("attn.to_q.lora_A.weight", "attn.to_k.lora_A.weight",
+                       "attn.to_v.lora_A.weight", "attn.add_q_proj.lora_A.weight",
+                       "attn.to_qkv_mlp_proj.lora_A.weight")
+_FLUX2_LORA_OUT_SIGS = ("attn.to_q.lora_B.weight", "attn.to_out.lora_B.weight",
+                        "attn.to_out.0.lora_B.weight")
+
+
+def _flux2_lora_hidden_dim(path):
+    """Dimension cachee du modele sur lequel une LoRA a ete entrainee, en-tete seule.
+
+    None des qu'il y a le moindre doute: on ne connait pas toutes les LoRA du monde,
+    et ecarter une LoRA valide sur une signature mal comprise serait pire que le
+    message d'erreur qu'on cherche a remplacer. Seule une dimension DECLAREE dans
+    _FLUX2_VARIANTS est retenue."""
+    try:
+        hdr = _safetensors_header(path)
+    except Exception:
+        return None
+    seen = {}
+    for k, v in hdr.items():
+        if k == "__metadata__" or not isinstance(v, dict):
+            continue
+        shape = v.get("shape") or []
+        if len(shape) != 2:
+            continue
+        if k.endswith(_FLUX2_LORA_IN_SIGS):
+            d = int(shape[1])
+        elif k.endswith(_FLUX2_LORA_OUT_SIGS):
+            d = int(shape[0])
+        else:
+            continue
+        seen[d] = seen.get(d, 0) + 1
+    known = {d: n for d, n in seen.items() if d in _FLUX2_VARIANTS}
+    return max(known, key=known.get) if known else None
+
+
+def _lora_variant_refusal(dim, base=None):
+    """Le refus nomme d'une LoRA entrainee pour l'AUTRE variante. Sans lui, peft
+    deverse quarante lignes de 'size mismatch ... torch.Size([27648, 128]) vs
+    torch.Size([36864, 128])' ou personne ne lit que 27648 = 9 x 3072 et donc 4B."""
+    want = _base_hidden_dim(base)
+    return (f"LoRA trained for {_variant_name(dim)}, and this build runs "
+            f"{_variant_name(want)}. Its matrices carry the hidden size of the model "
+            f"it was trained on ({dim} against {want}), so peft cannot fit them. To "
+            f"use it, " + _variant_fix(dim))
+
+
 def _base_hidden_dim(base=None):
     """Dimension attendue par le repo de base courant, lue dans transformer/config.json
     (hidden = attention_head_dim * num_attention_heads). None si indeterminable -- dans
@@ -959,6 +1011,11 @@ def _lora_unsupported(path):
     retire du jeu passe a peft en amont. Un LoHa reste refuse par son nom -- sans ca
     il part tel quel dans load_lora_weights, qui ne reconnait aucune de ses cles,
     n'applique RIEN et ne dit rien."""
+    # Mauvaise variante (une LoRA 4B sur une base 9B, ou l'inverse). En premier: c'est
+    # le cas courant, et le seul dont l'echec brut est illisible.
+    bad = _flux2_variant_mismatch(_flux2_lora_hidden_dim(path))
+    if bad:
+        return _lora_variant_refusal(_flux2_lora_hidden_dim(path))
     algo = _lycoris_algo(path)
     if algo and algo != "LoKr":
         return (f"LyCORIS {algo} - only LoKr is supported here; peft recognises none "
@@ -2528,6 +2585,15 @@ def _apply_edit_loras(pipe):
         if (p, w) not in _APPLIED_LOKRS:
             _log(f"edit LoKr {os.path.basename(p)} is NOT in the weights and cannot be "
                  f"merged on the fly; select it in Models > LoRA (a reload applies it)")
+    # Une LoRA d'edition inapplicable est une ERREUR FRANCHE, pas un saut: l'utilisateur
+    # a demande ce preset, editer sans lui rendrait un faux resultat. On leve AVANT
+    # peft, pour rendre la raison en une phrase plutot que quarante 'size mismatch'.
+    for p, _w in edit:
+        why = _lora_unsupported(p)
+        if why:
+            _APPLIED_EDIT_LORAS = []
+            raise RuntimeError(f"edit LoRA {os.path.basename(p)}: {why} "
+                               f"Nothing was generated.")
     seen, wanted = set(), []
     for pw in _peft_set(list(LORAS) + edit):
         if pw[0] not in seen:
