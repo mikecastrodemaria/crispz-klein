@@ -7,6 +7,33 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.26.0 — Picking a model uses what we already know about it
+
+Selecting a checkpoint set steps and CFG from `profile_for_model()`, which matches
+a **substring of the file name**. Every file with "klein" in it got 4 steps and no
+CFG — including builds whose own CivitAI page says otherwise. Worse, it did that
+*after* the user had chosen a Performance preset, silently undoing it: pick
+*Undistilled (28 steps)*, then pick the model, and you are back to 4 without a
+word. Reported exactly that way — "le 28 step n'est pas activé".
+
+The selection now reads what is already on disk, in this order:
+
+1. **The CivitAI consensus**, when the sidecar has one. On this machine that is
+   12 of 16 checkpoints, and it disagrees with the substring: **10** steps for
+   `rayKlein9bBFS_fp8V2`, **8** for `kleinFinalcut`, **5** for
+   `unstableRevolution` — against a blanket 4. No network access: the sidecar was
+   downloaded with the preview, and selecting a model has to stay instant.
+2. **The undistilled flag.** A build labelled *"undistilled — use with Turbo
+   Lora"* on its page is named `kleinForeskinFullCheckpoint_v19Final` on disk, so
+   the file name calls it distilled and condemns it to 4 steps and no CFG — the
+   smeared render of 1.23.0. It now gets the Undistilled preset.
+3. The file-name profile, as before.
+
+Each case says which source it used. The sampler is deliberately left alone —
+*Apply CivitAI recommended settings* still owns that, mapping failures included.
+
+Regression tests in `tests/test_undistilled_guidance.py`.
+
 ## 1.25.2 — The VRAM guard skipped exactly the case that needed it
 
 1.20.1 forced the offload when a base repo could not fit, and deliberately

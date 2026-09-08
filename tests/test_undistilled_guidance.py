@@ -95,10 +95,80 @@ def test_a_preset_exists_for_undistilled_checkpoints():
     print("OK test_a_preset_exists_for_undistilled_checkpoints")
 
 
+
+def test_an_undistilled_checkpoint_gets_the_right_profile():
+    """Choisir le modele posait 4 steps / CFG 1.0 d'apres le NOM DE FICHIER, ce qui
+    ecrasait le preset Performance que l'utilisateur venait de choisir -- en silence.
+    Le nom de fichier ne dit pas qu'un build est undistilled; le sidecar CivitAI si."""
+    import json
+    import tempfile
+    import cz_ui as U
+
+    tmp = tempfile.mkdtemp(prefix="cz_undist_")
+    ck = os.path.join(tmp, "kleinSomething_v1.safetensors")
+    open(ck, "wb").write(bytes(16))
+    side = os.path.join(tmp, "kleinSomething_v1.civitai.json")
+
+    def profile(model_name):
+        with open(side, "w", encoding="utf-8") as f:
+            json.dump({"modelName": model_name}, f)
+        return U._profile_for_checkpoint(ck)
+
+    st, g, why = profile("Klein Something (undistilled - use with Turbo Lora)")
+    assert g > 1.0 and st >= 20, (st, g)
+    assert "undistilled" in why, why
+
+    st, g, why = profile("Klein Something Turbo")
+    assert (st, g) == (4, 1.0), (st, g)     # profil du nom de fichier, comme avant
+    assert why == ""
+    print("OK test_an_undistilled_checkpoint_gets_the_right_profile")
+
+
+def test_the_civitai_consensus_wins_over_the_filename():
+    """Le profil par substring ne sait rien de CE modele: il imposait 4 steps a tout
+    ce qui s'appelle 'klein', alors que le consensus deja telecharge en demande 10
+    pour l'un, 8 pour l'autre. La donnee etait sur le disque, inutilisee."""
+    import json
+    import tempfile
+    import cz_ui as U
+
+    tmp = tempfile.mkdtemp(prefix="cz_reco_")
+    ck = os.path.join(tmp, "kleinSomething_v1.safetensors")
+    open(ck, "wb").write(bytes(16))
+    with open(os.path.join(tmp, "kleinSomething_v1.civitai.json"), "w",
+              encoding="utf-8") as f:
+        json.dump({"modelName": "Klein Something",
+                   "recommended": {"n": 10, "steps": 10, "guidance": 1.0}}, f)
+    st, g, why = U._profile_for_checkpoint(ck)
+    assert (st, g) == (10, 1.0), (st, g)
+    assert "consensus" in why and "10 community" in why, why
+
+    # et il bat aussi le drapeau undistilled: plus specifique que la categorie
+    with open(os.path.join(tmp, "kleinSomething_v1.civitai.json"), "w",
+              encoding="utf-8") as f:
+        json.dump({"modelName": "Klein Something (undistilled - use with Turbo Lora)",
+                   "recommended": {"n": 6, "steps": 20, "guidance": 2.5}}, f)
+    st, g, _why = U._profile_for_checkpoint(ck)
+    assert (st, g) == (20, 2.5), (st, g)
+    print("OK test_the_civitai_consensus_wins_over_the_filename")
+
+
+def test_the_undistilled_profile_comes_from_the_preset():
+    """Une seule source de verite: pas de 28/3.5 code en dur en plus de config.txt."""
+    import cz_ui as U
+    name, st, g = U._undistilled_profile()
+    assert name in U.PERFORMANCE, name
+    assert U.PERFORMANCE[name] == (st, g) or list(U.PERFORMANCE[name]) == [st, g]
+    print("OK test_the_undistilled_profile_comes_from_the_preset")
+
+
 if __name__ == "__main__":
     test_the_base_repo_stays_at_one()
     test_an_override_gets_the_slider()
     test_an_explicit_guidance_is_never_overridden()
     test_the_ignored_guidance_is_announced_once()
     test_a_preset_exists_for_undistilled_checkpoints()
+    test_an_undistilled_checkpoint_gets_the_right_profile()
+    test_the_civitai_consensus_wins_over_the_filename()
+    test_the_undistilled_profile_comes_from_the_preset()
     print("ALL OK")

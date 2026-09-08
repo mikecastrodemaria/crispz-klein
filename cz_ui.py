@@ -642,6 +642,56 @@ def _current_model_label():
     return os.path.basename(str(t)) if t else str(cz_pipeline.BASE_REPO)
 
 
+def _undistilled_profile():
+    """Le preset Performance qui porte une VRAIE CFG, ou None s'il n'y en a pas.
+    Source unique: pas de 28/3.5 code en dur ici ET dans config.txt."""
+    for name, (st, g) in PERFORMANCE.items():
+        if float(g) > 1.0:
+            return name, int(st), float(g)
+    return None, None, None
+
+
+def _profile_for_checkpoint(path):
+    """(steps, guidance, raison) pour ce checkpoint.
+
+    Le nom de FICHIER ne dit pas tout: un build undistilled s'appelle
+    'kleinForeskinFullCheckpoint_v19Final' comme les autres, donc profile_for_model()
+    y voit "klein" et repond 4 steps / CFG 1.0 -- le regime d'un modele distille,
+    qui rend ce modele-la en bouillie. Le nom CivitAI, lui, le dit noir sur blanc
+    ("undistilled - use with Turbo Lora") et on l'a deja sur le disque, dans le
+    sidecar telecharge avec la preview. On le lit."""
+    base = os.path.basename(path)
+    try:
+        import cz_civitai
+        civ = cz_civitai.load_civitai_sidecar(path) or {}
+    except Exception:
+        civ = {}
+    reco = civ.get("recommended") or {}
+    name = civ.get("modelName") or ""
+    # 1. Le consensus communautaire, s'il a ete recupere. Il bat le profil par
+    #    substring, qui ne sait rien de CE modele: sur cette machine il demande
+    #    10 steps pour rayKlein, 8 pour kleinFinalcut, 5 pour unstableRevolution --
+    #    la ou "klein" imposait 4 a tout le monde. Aucun acces reseau ici: on lit le
+    #    sidecar deja sur le disque, la selection d'un modele doit rester instantanee.
+    if reco.get("steps") is not None or reco.get("guidance") is not None:
+        d_st, d_g = profile_for_model(base)
+        st = int(reco["steps"]) if reco.get("steps") is not None else d_st
+        g = float(reco["guidance"]) if reco.get("guidance") is not None else d_g
+        return st, g, (f" Settings from the CivitAI consensus of "
+                       f"{reco.get('n', '?')} community image(s) — the sampler is not "
+                       f"applied here, use _Apply CivitAI recommended settings_ for that.")
+    # 2. Pas de consensus, mais la page dit que le modele n'est PAS distille.
+    if "undistil" in name.lower():
+        preset, st, g = _undistilled_profile()
+        if preset:
+            return st, g, (f" Its CivitAI page calls it **undistilled**, so the "
+                           f"distilled profile (4 steps, no CFG) would render mush: "
+                           f"applied _{preset}_ instead.")
+    # 3. Rien de connu: le profil par nom de fichier, comme avant.
+    st, g = profile_for_model(base)
+    return st, g, ""
+
+
 def _apply_checkpoint(name):
     """Selectionne soit un repo de base officiel FLUX.2 Klein (swap complet du BASE_REPO),
     soit un checkpoint single-file local (transformer override, VAE/encoder du base repo).
@@ -694,9 +744,9 @@ def _apply_checkpoint(name):
                 f"`{_current_model_label()}`.", *_noop[1:])
     path = resolve_checkpoint(name)
     set_zimage_transformer(path)
-    st, g = profile_for_model(os.path.basename(path))
+    st, g, why = _profile_for_checkpoint(path)
     return (f"Klein transformer: {os.path.basename(path)} -> auto steps={st}, CFG={g} "
-            f"(transformer swap on next run — VAE + text encoder stay loaded).",
+            f"(transformer swap on next run — VAE + text encoder stay loaded).{why}",
             gr.update(value=st), gr.update(value=g), _perf_update(st, g),
             gr.update(), gr.update())
 
