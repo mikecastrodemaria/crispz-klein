@@ -215,6 +215,10 @@ _LOADED_KEY = None
 # LoRA reellement posees sur _BASE_PIPE (liste de (chemin, poids)). Sert a echanger les
 # LoRA a chaud sans recharger le modele: si ca diverge de LORAS, _apply_loras resynchronise.
 _APPLIED_LORAS = []
+# LoKr FUSIONNEES dans le transformer courant (liste de (chemin, poids)). Ce n'est PAS
+# un adaptateur: une fois ajoutee aux poids elle ne se retire pas. _apply_loras compare
+# donc ce jeu a celui demande et force un rechargement complet des qu'il change.
+_APPLIED_LOKRS = []
 # LoRA d'EDITION: jeu SEPARE du base. Sur klein l'edition passe par le MEME pipeline
 # (multi-reference natif), mais les LoRA d'edition restent un jeu distinct, pose et
 # retire autour d'un appel edit sans toucher aux LoRA de generation. Meme
@@ -907,27 +911,59 @@ def _variant_refusal(dim, base=None):
 _LYCORIS_SUFFIXES = ("lokr_", "hada_")
 
 
+def _lycoris_algo_from_header(hdr):
+    """'LoKr', 'LoHa' ou None, depuis un en-tete deja lu."""
+    suf = [k.rsplit(".", 1)[-1] for k in hdr if k != "__metadata__"]
+    if sum(1 for s in suf if s.startswith("hada_")) >= 4:
+        return "LoHa"
+    if sum(1 for s in suf if s.startswith("lokr_")) >= 4:
+        return "LoKr"
+    return None
+
+
+_LYCORIS_CACHE = {}
+
+
+def _lycoris_algo(path):
+    """L'algorithme LyCORIS d'un fichier, lu a l'en-tete seule, memoise sur
+    (chemin, taille, mtime): _apply_loras est appele A CHAQUE generation, relire
+    l'en-tete d'un fichier d'un gigaoctet sur un disque reseau a chaque image serait
+    payer cher une reponse qui ne change pas."""
+    try:
+        k = _file_key(path)
+    except OSError:
+        return None
+    if k not in _LYCORIS_CACHE:
+        try:
+            _LYCORIS_CACHE[k] = _lycoris_algo_from_header(_safetensors_header(path))
+        except Exception:
+            _LYCORIS_CACHE[k] = None
+    return _LYCORIS_CACHE[k]
+
+
 def _lycoris_reason(hdr):
-    """Le refus nomme pour un fichier LyCORIS: quel algorithme, et quoi faire."""
-    algo = "LoHa" if any(k.rsplit(".", 1)[-1].startswith("hada_")
-                         for k in hdr if k != "__metadata__") else "LoKr"
-    return (f"LyCORIS {algo}, not a LoRA and not a checkpoint - diffusers/peft cannot "
-            f"apply it (no conversion exists for its Kronecker/Hadamard factors). Use "
-            f"a version already merged into a base model, or merge it yourself with "
-            f"LyCORIS/sd-scripts first")
+    """Le refus nomme pour un LyCORIS trouve la ou il ne va pas."""
+    algo = _lycoris_algo_from_header(hdr) or "adapter"
+    if algo == "LoKr":
+        return ("LyCORIS LoKr, not a checkpoint - it IS supported, but as an adapter: "
+                "move it to the LoRA folder and pick it in Models > LoRA, where it is "
+                "merged into the weights at load")
+    return (f"LyCORIS {algo}, neither a LoRA nor a checkpoint - only LoKr is supported "
+            f"here. Use a version already merged into a base model, or merge it "
+            f"yourself with LyCORIS/sd-scripts first")
 
 
 def _lora_unsupported(path):
-    """Raison (str) si ce fichier ne peut pas etre pose comme LoRA, sinon None.
-    En-tete seule. Sans ca, un LyCORIS part tel quel dans load_lora_weights, qui ne
-    reconnait aucune de ses cles: peft n'applique RIEN et ne dit rien."""
-    try:
-        hdr = _safetensors_header(path)
-    except Exception:
-        return None
-    n = sum(1 for k in hdr if k != "__metadata__"
-            and k.rsplit(".", 1)[-1].startswith(_LYCORIS_SUFFIXES))
-    return _lycoris_reason(hdr) if n >= 4 else None
+    """Raison (str) si ce fichier ne peut pas etre pose comme adaptateur PEFT, sinon
+    None. Un LoKr rend None: il EST supporte, par fusion (_merge_lokr), et il est
+    retire du jeu passe a peft en amont. Un LoHa reste refuse par son nom -- sans ca
+    il part tel quel dans load_lora_weights, qui ne reconnait aucune de ses cles,
+    n'applique RIEN et ne dit rien."""
+    algo = _lycoris_algo(path)
+    if algo and algo != "LoKr":
+        return (f"LyCORIS {algo} - only LoKr is supported here; peft recognises none "
+                f"of its Hadamard factors and would apply nothing, silently")
+    return None
 
 
 def _quant_metadata_formats(hdr):
@@ -1854,11 +1890,12 @@ def set_offload_mode(mode):
 def free_vram():
     """Libere le pipeline de base + les pipelines derives et rend la VRAM
     (palier 3: unload sur inactivite ou endpoint /unload). Rechargement paresseux."""
-    global _BASE_PIPE, _DERIVED, _LOADED_KEY, _APPLIED_LORAS
+    global _BASE_PIPE, _DERIVED, _LOADED_KEY, _APPLIED_LORAS, _APPLIED_LOKRS
     _BASE_PIPE = None
     _DERIVED = {}
     _LOADED_KEY = None
     _APPLIED_LORAS = []      # plus de pipe -> plus d'adaptateur pose
+    _APPLIED_LOKRS = []      # ... ni de poids ou une LoKr serait fusionnee
     _embed_cache_clear(" (VRAM freed)")
     gc.collect()
     if DEVICE == "cuda":
@@ -2214,6 +2251,160 @@ def _load_lora_normalized(path):
     return out, n
 
 
+# ----------------------------------------------------------------------------
+# LyCORIS LoKr. La mise a jour y est un produit de Kronecker: dW = w1 (x) w2. Ni peft
+# ni diffusers ne savent poser ca sur un pipeline (pas une occurrence de 'lokr' dans
+# loaders/lora_conversion_utils.py) -- mais rien n'empeche de la MATERIALISER et de
+# l'ajouter aux poids. C'est ce que fait un merge, sauf qu'il se fait ici, en local,
+# sans dependre d'un checkpoint fusionne par un tiers.
+#
+# Et le qkv interdit l'autre approche. Sur FLUX.2 le q/k/v est FUSIONNE cote checkpoint
+# ([3d, d]) et SEPARE cote diffusers (trois [d, d]). Un produit de Kronecker ne se
+# tranche pas en trois: avec w1 [4,4] et w2 [3072,1024], les blocs de w1 font 3072
+# lignes, pas 4096. Le delta materialise, lui, se coupe comme n'importe quelle matrice.
+#
+# Contrepartie assumee, et annoncee: un merge n'est pas un adaptateur. Changer de LoKr
+# ou son poids demande un rechargement du transformer, la ou une LoRA PEFT se remplace
+# a chaud. _apply_loras le detecte et le dit.
+# ----------------------------------------------------------------------------
+
+# Prefixes de module employes par les entraineurs (ai-toolkit ecrit 'diffusion_model.').
+# Volontairement PAS de 'lora_unet_': ce dialecte kohya remplace les points par des
+# underscores dans le chemin du module, le convertisseur diffusers ne le reconnaitrait
+# pas, et pretendre le supporter donnerait un merge silencieusement vide.
+_LOKR_PREFIXES = ("model.diffusion_model.", "diffusion_model.", "transformer.")
+
+
+def _strip_lokr_prefix(name):
+    for p in _LOKR_PREFIXES:
+        if name.startswith(p):
+            return name[len(p):]
+    return name
+
+
+def _lokr_factor(mod, which):
+    """(matrice, rang) d'un facteur LoKr. La matrice PLEINE si elle est la (rang None:
+    il n'y en a pas), sinon le produit de ses deux facteurs de rang reduit."""
+    full = mod.get(f"lokr_{which}")
+    if full is not None:
+        return full.to(torch.float32), None
+    a, b = mod.get(f"lokr_{which}_a"), mod.get(f"lokr_{which}_b")
+    if a is None or b is None:
+        return None, None
+    return a.to(torch.float32) @ b.to(torch.float32), int(a.shape[1])
+
+
+def _lokr_scale(mod, rank):
+    """Le facteur d'echelle LyCORIS.
+
+    Quand w1 ET w2 sont pleines il n'y a pas de rang: LyCORIS n'applique aucun scalaire.
+    Les fichiers ai-toolkit ecrivent alors alpha = lora_dim (mesure sur SNOFS: 1e10),
+    donc alpha/rang vaudrait 1.0 aussi -- les deux conventions concordent, ce qui est
+    exactement pourquoi on peut trancher sans deviner. Sinon alpha / rang, comme peft
+    (peft/tuners/lokr/layer.py: scaling = alpha / r)."""
+    if rank is None:
+        return 1.0
+    alpha = mod.get("alpha")
+    return 1.0 if alpha is None else float(alpha) / float(rank)
+
+
+def _lokr_delta(mod):
+    """dW float32 d'un module LoKr."""
+    if "lokr_t2" in mod:
+        raise ValueError("lokr_t2 (convolution factor) is not supported here")
+    w1, r1 = _lokr_factor(mod, "w1")
+    w2, r2 = _lokr_factor(mod, "w2")
+    if w1 is None or w2 is None:
+        raise ValueError("incomplete LoKr factors")
+    return torch.kron(w1, w2) * _lokr_scale(mod, r1 if r1 is not None else r2)
+
+
+def _merge_lokr(transformer, path, weight):
+    """Fusionne un LoKr dans les poids du transformer: W += weight * dW.
+
+    MODULE PAR MODULE. Le delta complet d'un SNOFS-9B pese ce que pesent les couches
+    qu'il touche (~17 Go en bf16, le double en float32): le materialiser d'un bloc
+    ferait deborder la RAM pour rien, alors qu'une couche a la fois plafonne a ~200 Mo.
+
+    Les cles passent par le convertisseur Flux2 de DIFFUSERS, celui-la meme qu'emploie
+    from_single_file: le renommage et le decoupage du qkv fusionne sont donc exactement
+    ceux du chargement du modele et ne peuvent pas diverger de lui.
+
+    Renvoie (n_fusionnees, [ce qui n'a pas pu l'etre]). Rien n'est jamais saute en
+    silence: tout ce qui ne trouve pas sa cible remonte dans la seconde liste."""
+    from safetensors.torch import load_file
+    from diffusers.loaders.single_file_utils import (
+        convert_flux2_transformer_checkpoint_to_diffusers)
+    sd = load_file(path)
+    mods = {}
+    for k, v in sd.items():
+        base, _, suf = k.rpartition(".")
+        if suf == "alpha" or suf.startswith(_LYCORIS_SUFFIXES):
+            mods.setdefault(_strip_lokr_prefix(base), {})[suf] = v
+    params = dict(transformer.named_parameters())
+    hit, problems = 0, []
+    for name in sorted(mods):
+        try:
+            delta = _lokr_delta(mods[name])
+        except Exception as e:
+            problems.append(f"{name}: {e}")
+            continue
+        # Un dict d'UNE entree: le convertisseur travaille cle par cle (renommages +
+        # handlers), il rend donc ici 1 tenseur, ou 3 quand c'est un qkv fusionne.
+        for k, d in convert_flux2_transformer_checkpoint_to_diffusers(
+                {name + ".weight": delta}).items():
+            p = params.get(k)
+            if p is None:
+                problems.append(f"{k}: no such weight in the transformer")
+            elif tuple(p.shape) != tuple(d.shape):
+                problems.append(f"{k}: delta {tuple(d.shape)} vs weight {tuple(p.shape)}")
+            else:
+                with torch.no_grad():
+                    # float32 pour l'addition: ajouter un petit delta a un poids bf16
+                    # DANS le bf16 perd les bits de poids faible du delta.
+                    p.copy_((p.float() + d.to(p.device).float() * float(weight)).to(p.dtype))
+                hit += 1
+        del delta
+    return hit, problems
+
+
+def _lokr_set(loras):
+    """Le sous-ensemble LoKr d'une liste de (chemin, poids): fusionne, pas pose."""
+    return [pw for pw in loras if _lycoris_algo(pw[0]) == "LoKr"]
+
+
+def _peft_set(loras):
+    """Tout ce qui n'est pas un LoKr, donc ce qui part chez peft. Un LoHa y RESTE
+    volontairement: _sync_adapters le refuse par son nom, alors qu'un filtrage
+    silencieux ici le ferait disparaitre sans un mot."""
+    return [pw for pw in loras if _lycoris_algo(pw[0]) != "LoKr"]
+
+
+def _apply_lokrs_to(transformer):
+    """Fusionne dans ce transformer les LoKr de LORAS et met a jour _APPLIED_LOKRS.
+    A appeler juste apres le chargement et AVANT l'offload: les poids sont encore sur
+    le CPU, entiers, sans hook accelerate pose dessus."""
+    global _APPLIED_LOKRS
+    _APPLIED_LOKRS = []
+    for p, w in _lokr_set(LORAS):
+        t0 = time.time()
+        try:
+            n, problems = _merge_lokr(transformer, p, w)
+        except Exception as e:
+            _log(f"LoKr NOT merged, {os.path.basename(p)}: {type(e).__name__}: {e}")
+            continue
+        if problems:
+            _log(f"LoKr {os.path.basename(p)}: {len(problems)} tensor(s) NOT merged, "
+                 f"first: {problems[0]}")
+        if not n:
+            _log(f"LoKr {os.path.basename(p)}: nothing merged - the render will look "
+                 f"exactly as if it were not selected")
+            continue
+        _log(f"LoKr merged into the weights: {os.path.basename(p)} @ {w} "
+             f"-> {n} tensor(s) in {time.time() - t0:.1f}s")
+        _APPLIED_LOKRS.append((p, w))
+
+
 def _sync_adapters(pipe, wanted, applied, force=False, tag="LoRA"):
     """Synchronise les adaptateurs PEFT d'un pipe avec le jeu `wanted`, SANS recharger
     le modele. `applied` = jeu reellement pose sur ce pipe (liste de (chemin, poids)).
@@ -2288,7 +2479,20 @@ def _apply_loras(pipe, force=False):
     """LoRA du BASE (txt2img/img2img): synchronise le pipe avec LORAS via _sync_adapters.
     Renvoie True si applique, False si echec (le caller retombe sur un reload complet)."""
     global _APPLIED_LORAS
-    ok, _APPLIED_LORAS = _sync_adapters(pipe, LORAS, _APPLIED_LORAS, force=force)
+    # Une LoKr est FUSIONNEE dans les poids: on ne peut ni la retirer ni la reponderer
+    # sans repartir du transformer d'origine. Des que le jeu demande differe de celui
+    # qui est deja dedans, on le dit et on rend la main au rechargement complet.
+    want_lokr = _lokr_set(LORAS)
+    if not force and want_lokr != _APPLIED_LOKRS:
+        _log("LoKr selection changed -> full reload. A LoKr is merged INTO the weights "
+             "(it is not a PEFT adapter), so it cannot be swapped or re-weighted in "
+             "place: " + (", ".join(f"{os.path.basename(p)}@{w}" for p, w in want_lokr)
+                          or "none") + " wanted, "
+             + (", ".join(f"{os.path.basename(p)}@{w}" for p, w in _APPLIED_LOKRS)
+                or "none") + " in the weights")
+        return False
+    ok, _APPLIED_LORAS = _sync_adapters(pipe, _peft_set(LORAS), _APPLIED_LORAS,
+                                        force=force)
     if not ok:
         _log("falling back to a full reload")
     return ok
@@ -2317,8 +2521,15 @@ def _apply_edit_loras(pipe):
         edit.append((EDIT_SPEED["path"], 1.0))
     # Union base + edition, sans doublon de chemin (le 1er poids gagne, meme regle
     # que le protocole pour `loras`).
+    # Les LoKr sont deja DANS les poids (fusionnees au chargement), elles n'ont rien a
+    # faire dans un jeu d'adaptateurs. Une LoKr d'edition qui n'y serait pas ne peut pas
+    # etre posee a chaud: on le dit, plutot que d'editer sans elle en silence.
+    for p, w in _lokr_set(edit):
+        if (p, w) not in _APPLIED_LOKRS:
+            _log(f"edit LoKr {os.path.basename(p)} is NOT in the weights and cannot be "
+                 f"merged on the fly; select it in Models > LoRA (a reload applies it)")
     seen, wanted = set(), []
-    for pw in list(LORAS) + edit:
+    for pw in _peft_set(list(LORAS) + edit):
         if pw[0] not in seen:
             seen.add(pw[0])
             wanted.append(pw)
@@ -2349,6 +2560,9 @@ def _swap_transformer(pipe):
         _log(f"switching Klein transformer -> {ZIMAGE_TRANSFORMER or BASE_REPO} "
              "(keeping VAE + text encoder in VRAM)")
         new_t = _load_transformer()
+        # Transformer neuf = poids neufs: les LoKr fusionnees dans l'ancien ne l'y sont
+        # plus. On refusionne AVANT le placement, tant qu'il est encore sur le CPU.
+        _apply_lokrs_to(new_t)
         old = getattr(pipe, "transformer", None)
         off = _effective_offload()
         # Offload: les hooks accelerate sont poses sur les composants. Il faut les retirer
@@ -2468,6 +2682,10 @@ def _ensure_base():
     # LoRA Qwen-Image (sur le transformer du base -> partage par les pipes derives).
     # force=True: pipe neuf, aucun adaptateur pose -> on (re)pose tout.
     _APPLIED_LORAS = []
+    # Les LoKr AVANT tout deplacement/offload: le transformer est encore sur le CPU,
+    # en un seul morceau, sans hook accelerate -- c'est la seule fenetre ou une fusion
+    # dans les poids est simple et sure.
+    _apply_lokrs_to(pipe.transformer)
     if LORAS:
         _apply_loras(pipe, force=True)
     # Attention slicing: POSE PAR APPEL via _set_slicing (selon la resolution traitee),

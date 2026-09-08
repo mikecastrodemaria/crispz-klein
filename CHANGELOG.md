@@ -7,6 +7,46 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.27.0 — LoKr, merged into the weights
+
+1.26.3 stopped a LyCORIS from failing silently. This applies it.
+
+A LoKr's update is a Kronecker product, `dW = w1 (x) w2`. peft and diffusers cannot
+pose one, so it is **merged into the transformer weights** at load: drop it in the
+LoRA folder, pick it in *Models > LoRA*. SNOFS now runs from its own adapter instead
+of depending on somebody's merged checkpoint — the one that came out grey.
+
+**Why a merge and not an adapter.** On FLUX.2 the q/k/v projection is *fused* in the
+checkpoint (`[3d, d]`) and *split* in diffusers (three `[d, d]`). A Kronecker product
+does not cut into three: on SNOFS `w1` is `[4, 4]` and `w2` `[3072, 1024]`, so its
+blocks are 3072 rows tall where the split falls at 4096. The materialized delta cuts
+like any matrix.
+
+**What it is checked against.** Key conversion goes through diffusers' own Flux2
+converter — the one `from_single_file` uses — so it cannot drift from how the model is
+loaded. Verified against the real thing before writing a line of it: the 112 modules
+of `klein_snofs_v1_4` produce **144 diffusers keys, and all 144 match the klein-9B
+transformer by name and by shape**, none missing, none mis-shaped. Anything that fails
+to find its target is reported, never dropped.
+
+**The scale, settled rather than guessed.** LyCORIS applies no scalar when `w1` and
+`w2` are full (there is no rank); peft computes `alpha / r`. ai-toolkit writes
+`alpha = lora_dim` in the full case — measured 1e10 on the real file, via a few bytes
+of range request — so both conventions land on 1.0. Both are implemented and tested.
+
+Merging runs **module by module**: a full SNOFS-9B delta weighs what the layers it
+touches weigh (~17 GB in bf16, twice that in float32), so materializing it in one go
+would blow up RAM for nothing. One layer at a time peaks around 200 MB. The addition
+is done in float32 — adding a small delta to a bf16 weight *in* bf16 drops the delta's
+low bits.
+
+**The trade-off, stated:** a merge is not an adapter. Changing which LoKr is selected,
+or its weight, reloads the transformer — announced in the log — where a PEFT LoRA is
+swapped in place. LoHa remains unsupported and refused by name.
+
+Regression tests in `tests/test_lokr_merge.py`; `tests/test_lora_dialect.py` now
+covers the routing only.
+
 ## 1.26.3 — A LyCORIS applied nothing, and said nothing
 
 Following the grey `snofs14` render back to its source: SNOFS ships from

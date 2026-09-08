@@ -112,13 +112,15 @@ def test_union_dedupes_on_path_first_weight_wins():
 
 
 # ---------------------------------------------------------------------------
-# 3. LyCORIS (LoKr / LoHa). Ce n'est pas une LoRA: la mise a jour est factorisee en
-#    produit de Kronecker (LoKr) ou de Hadamard (LoHa), et diffusers n'a aucune
-#    conversion pour ces facteurs. Le piege est qu'il n'y a AUCUNE erreur: les cles
-#    d'ai-toolkit s'appellent 'diffusion_model.<module>.lokr_w1' -- ni '.lora_A/B'
-#    ni le prefixe 'lora_unet_' -- donc la garde checkpoint les prenait pour un
-#    modele, et la garde LoRA les passait telles quelles a peft, qui n'appliquait
-#    rien en silence. Releve sur Ashen3/SNOFS (Klein9b, 112 couches x w1/w2/alpha).
+# 3. LyCORIS (LoKr / LoHa). La mise a jour y est factorisee en produit de Kronecker
+#    (LoKr) ou de Hadamard (LoHa), et diffusers n'en convertit ni l'un ni l'autre.
+#    Le piege etait qu'il n'y avait AUCUNE erreur: les cles d'ai-toolkit s'appellent
+#    'diffusion_model.<module>.lokr_w1' -- ni '.lora_A/B' ni le prefixe 'lora_unet_'
+#    -- donc la garde checkpoint les prenait pour un modele, et la garde LoRA les
+#    passait telles quelles a peft, qui n'appliquait rien en silence.
+#    Le LoKr est desormais supporte par FUSION dans les poids (cf. test_lokr_merge);
+#    ces tests-ci ne verifient plus que l'AIGUILLAGE. Le LoHa, lui, reste refuse.
+#    Releve sur Ashen3/SNOFS (Klein9b, 112 couches x w1/w2/alpha).
 # ---------------------------------------------------------------------------
 
 def _lycoris(name, suffixes):
@@ -133,12 +135,16 @@ def _lycoris(name, suffixes):
     return p
 
 
-def test_a_lokr_is_refused_in_both_folders():
+def test_a_lokr_is_routed_to_the_lora_folder():
+    """Depuis 1.27.0 le LoKr est SUPPORTE, par fusion dans les poids: il n'est donc
+    refuse que la ou il ne va pas -- le dossier des checkpoints -- et le refus dit ou
+    le mettre. La fusion elle-meme est couverte par tests/test_lokr_merge.py."""
     p = _lycoris("snofs_like_lokr.safetensors", ("lokr_w1", "lokr_w2"))
-    for why in (P._safetensors_unsupported(p), P._lora_unsupported(p)):
-        assert why and "LoKr" in why, why
-        assert "merged" in why, why
-    print("OK test_a_lokr_is_refused_in_both_folders")
+    why = P._safetensors_unsupported(p)
+    assert why and "LoKr" in why, why
+    assert "LoRA folder" in why, why
+    assert P._lora_unsupported(p) is None, P._lora_unsupported(p)
+    print("OK test_a_lokr_is_routed_to_the_lora_folder")
 
 
 def test_a_loha_is_named_as_such():
@@ -162,7 +168,7 @@ if __name__ == "__main__":
     for fn in (test_detects_the_alternate_dialect, test_normalizes_a_mixed_file,
                test_edit_loras_sync_the_union_with_the_base_set,
                test_union_dedupes_on_path_first_weight_wins,
-               test_a_lokr_is_refused_in_both_folders,
+               test_a_lokr_is_routed_to_the_lora_folder,
                test_a_loha_is_named_as_such,
                test_a_real_peft_lora_still_passes):
         fn()

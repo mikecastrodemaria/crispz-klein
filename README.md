@@ -601,6 +601,31 @@ Without `--list` it converts, and it resumes: anything already cached is skipped
 second. Both variants are pre-filled whatever base you currently run, so switching
 4B ↔ 9B never repays the conversion. Deleting `cache/dequant` is always safe.
 
+### LyCORIS LoKr
+
+A LoKr is not a LoRA: its update is a Kronecker product, `dW = w1 (x) w2`, and
+neither peft nor diffusers can apply one — there is not a single occurrence of
+`lokr` in `loaders/lora_conversion_utils.py`. It is supported here by **merging it
+into the weights** at load: drop it in the LoRA folder and pick it in *Models >
+LoRA* like any other.
+
+Why a merge rather than an adapter: on FLUX.2 the q/k/v projection is **fused** in the
+checkpoint (one `[3d, d]` matrix) and **split** in diffusers (three `[d, d]`). A
+Kronecker product does not cut into three — on SNOFS, `w1` is `[4, 4]` and `w2`
+`[3072, 1024]`, so its blocks are 3072 rows tall where the split falls at 4096. The
+materialized delta cuts like any other matrix. Key conversion goes through diffusers'
+own Flux2 converter, the one `from_single_file` uses, so it cannot drift from how the
+model itself is loaded — and anything that fails to find its target is reported, never
+dropped quietly.
+
+The scale follows LyCORIS: no scalar at all when `w1` and `w2` are full (there is no
+rank), `alpha / rank` otherwise. ai-toolkit writes `alpha = lora_dim` in the full case
+(1e10 on SNOFS), so both conventions agree on 1.0.
+
+**The trade-off, stated plainly:** a merge is not an adapter. Changing which LoKr is
+selected, or its weight, reloads the transformer — the app detects it and says so —
+where a PEFT LoRA is swapped in place. LoHa is *not* supported and is refused by name.
+
 **A local 9B `.safetensors` does not spare you the gated repo either.** A single-file
 checkpoint only replaces the *transformer*; the VAE, the text encoder and the
 architecture config still come from the gated base repo. An fp8 or GGUF 9B build
