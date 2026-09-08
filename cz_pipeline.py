@@ -2240,7 +2240,7 @@ def _swap_transformer(pipe):
         _log("transformer swap skipped (GGUF changes the effective offload) -> full reload")
         return False
     try:
-        _log(f"switching Qwen transformer -> {ZIMAGE_TRANSFORMER or BASE_REPO} "
+        _log(f"switching Klein transformer -> {ZIMAGE_TRANSFORMER or BASE_REPO} "
              "(keeping VAE + text encoder in VRAM)")
         new_t = _load_transformer()
         old = getattr(pipe, "transformer", None)

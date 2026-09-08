@@ -597,6 +597,20 @@ def _refresh_checkpoints(new_dir, extra_dir=""):
     return (gr.update(choices=ZIMAGE_BASE_REPOS + cks), msg, gr.update(choices=list_presets()))
 
 
+def _ui_set_detailer_denoise(v):
+    """Pose le denoise du detailer visages. Le setter de cz_detailer renvoie un
+    statut -- utile a la CLI, sans emploi ici: le curseur affiche deja la valeur, et
+    ses bornes (0.1-0.7) sont celles du clamp, donc il n'y a rien a annoncer. Sans
+    ce sas, Gradio avertit a CHAQUE mouvement du curseur ("returned too many output
+    values"), et ce bruit finit par masquer un vrai avertissement."""
+    cz_detailer.set_denoise(v)
+
+
+def _ui_set_hand_denoise(v):
+    """Idem pour le detailer de mains."""
+    cz_detailer.set_hand_denoise(v)
+
+
 def _valid_performance(name):
     """Nom de preset Performance sur (steps, guidance), ou le premier preset reel.
     Une valeur hors `choices` est rejetee par le frontend Gradio: le radio garderait
@@ -4136,9 +4150,9 @@ def build_ui():
         wildcards_order_cb.change(set_wildcards_in_order, [wildcards_order_cb], [wild_order_status])
         save_pre_upscale_cb.change(cz_pipeline.set_save_pre_upscale, [save_pre_upscale_cb], None)
         detail_faces_cb.change(cz_detailer.set_enabled, [detail_faces_cb], None)
-        detailer_denoise_sl.change(cz_detailer.set_denoise, [detailer_denoise_sl], None)
+        detailer_denoise_sl.change(_ui_set_detailer_denoise, [detailer_denoise_sl], None)
         detail_hands_cb.change(cz_detailer.set_hands_enabled, [detail_hands_cb], None)
-        hand_denoise_sl.change(cz_detailer.set_hand_denoise, [hand_denoise_sl], None)
+        hand_denoise_sl.change(_ui_set_hand_denoise, [hand_denoise_sl], None)
         lora_slots_num.change(_ui_set_lora_slots, [lora_slots_num], lora_rows)
         refresh_btn.click(_refresh_models, [esrgan_dir_tb], [esrgan, paths_status])
         save_paths_btn.click(_save_paths_to_prefs,

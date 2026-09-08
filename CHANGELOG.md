@@ -7,6 +7,28 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.25.1 — Two Gradio warnings per slider move
+
+    UserWarning: A function (set_denoise) returned too many output values
+    (needed: 0, returned: 1). Ignoring extra values.
+
+`cz_detailer.set_denoise()` and `set_hand_denoise()` return a status string —
+useful to the CLI — but the UI binds them with no output component. Gradio 5
+warns on **every** trigger, so dragging a denoise slider printed a pair of
+warnings per step. Harmless in itself, and that is the problem: enough of it and
+a real warning goes unread.
+
+The sliders are bounded 0.1–0.7, exactly the setter's clamp, so the returned
+string can never say anything the slider does not already show. Two thin UI
+wrappers now swallow it.
+
+A test walks every `outputs=None` binding in `cz_ui` and fails if its handler
+returns a value — the same slip will not come back quietly
+(`tests/test_ui_binding_returns.py`).
+
+Also: the transformer hot-swap still logged *"switching **Qwen** transformer"*.
+Missed by the 1.22.1 sweep; the last one.
+
 ## 1.25.0 — A Performance preset for undistilled checkpoints
 
 1.23.0 let a real CFG through on a single-file checkpoint, but the UI offered no
