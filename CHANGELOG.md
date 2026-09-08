@@ -7,6 +7,29 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.26.2 — A 4-bit checkpoint would have failed silently
+
+Chasing a uniform grey render from `snofs14Flux2Klein9b_14Distilled`, its Civitai
+page turned out to advertise the same model "converted to MXFP8 **and NVFP4**
+quants". The MXFP8 build is handled. The NVFP4 one would not have been — and would
+not have said so.
+
+A 4-bit build has no `F8` dtype, so `_safetensors_dequant()` returns None and the
+file **escapes the dequant loader entirely**, landing in the plain bf16 path. Best
+case an unreadable diffusers error about shapes; worst case another uniform image
+with nothing in the log. Exactly the failure this house refuses to ship silently.
+
+NVFP4 and MXFP4 are now refused by name, from the header alone, reading the
+`_quantization_metadata` that ComfyUI and NVIDIA ModelOpt both write — that is the
+reliable signal, since 4-bit weights packed in pairs present as `U8` and the dtype
+alone gives nothing away. The message names the format found and points at the fp8
+or bf16 version of the same model, because a Civitai page usually offers all three.
+
+The MXFP8 path is untouched and covered by a control test: the whole local library
+still routes exactly as before, snofs14 included.
+
+Regression tests in `tests/test_quant_formats.py`.
+
 ## 1.26.1 — The pre-cache refused to pre-cache
 
 `rebuild_cache.bat` exists to pay the fp8/int8 dequantization once, offline, instead

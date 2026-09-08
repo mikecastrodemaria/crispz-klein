@@ -900,12 +900,33 @@ def _variant_refusal(dim, base=None):
             + _variant_fix(dim))
 
 
+def _quant_metadata_formats(hdr):
+    """Les formats de quantification declares dans __metadata__._quantization_metadata
+    (ComfyUI, NVIDIA ModelOpt), en minuscules. Ensemble vide si le fichier n'en declare
+    pas. C'est la source la plus fiable: elle nomme le format meme quand le dtype
+    safetensors, lui, ne le distingue pas (du 4 bits empaquete se presente en U8)."""
+    try:
+        raw = (hdr.get("__metadata__") or {}).get("_quantization_metadata")
+        if not raw:
+            return set()
+        layers = json.loads(raw).get("layers") or {}
+        return {str(v.get("format", "")).lower()
+                for v in layers.values() if isinstance(v, dict)}
+    except Exception:
+        return set()
+
+
 def _safetensors_unsupported(path):
     """Renvoie une raison (str) si le .safetensors n'est PAS chargeable, sinon None.
-    Lit juste l'en-tete (rapide). Deux cas restent non supportes:
+    Lit juste l'en-tete (rapide). Trois cas restent non supportes:
       - fichier LoRA range dans le dossier checkpoints (cles kohya/peft)
       - SVDQuant / Nunchaku (tenseurs nommes '*.qweight'): poids pre-quantifies INT4
         qui exigent le runtime nunchaku (kernels dedies), pas dequantifiables ici.
+      - NVFP4 / MXFP4 (4 bits): ni dequant (l'empaquetage 4 bits et la convention de
+        scale leur sont propres) ni runtime (TensorRT/ModelOpt). Les nommer est
+        indispensable: un FP4 non reconnu n'a pas de dtype F8, donc il ECHAPPE au
+        loader dequant et part dans le chemin bf16 normal, ou il donne au mieux une
+        erreur diffusers illisible, au pire une image uniforme.
     Les FP8 / INT8 'scaled' facon ComfyUI ne sont PLUS rejetes: ils passent par le
     loader dequant (_safetensors_dequant + _load_dequant_state_dict)."""
     bad = _flux2_variant_mismatch(_flux2_hidden_dim(path))
@@ -914,6 +935,7 @@ def _safetensors_unsupported(path):
     try:
         hdr = _safetensors_header(path)
         has_qweight = False
+        has_fp4 = False
         lora_keys = 0
         te_keys = 0
         dit_keys = 0
@@ -922,6 +944,11 @@ def _safetensors_unsupported(path):
                 continue
             if k.endswith(".qweight"):
                 has_qweight = True
+            # F4_E2M1 (safetensors >= 0.5). Un FP4 empaquete par paires se declare
+            # parfois en U8: le dtype seul ne suffit pas, d'ou le croisement avec les
+            # metadonnees de quantification plus bas.
+            if str(v.get("dtype", "")).upper().startswith("F4"):
+                has_fp4 = True
             # Encodeur texte Qwen2.5-VL (fichier ComfyUI 'qwen_2.5_vl_7b_fp8_scaled'):
             # couches LLM + tour visuelle, jamais de blocs de diffusion.
             if k.startswith(("model.layers.", "visual.", "lm_head.", "model.embed_tokens",
@@ -947,6 +974,15 @@ def _safetensors_unsupported(path):
         # un checkpoint BF16/FP16 normal n'a jamais de 'qweight'.
         if has_qweight:
             return "SVDQuant/Nunchaku INT4"
+        # 4 bits (NVFP4/MXFP4). On nomme le format DECLARE plutot qu'un generique
+        # "FP4": une page Civitai propose souvent le meme modele en bf16, fp8 et fp4,
+        # et savoir lequel on tient dit lequel retelecharger.
+        fp4 = sorted(f for f in _quant_metadata_formats(hdr) if "fp4" in f)
+        if fp4 or has_fp4:
+            what = fp4[0].upper() if fp4 else "FP4"
+            return (f"{what} (4-bit) - this build has no FP4 path, neither dequant nor "
+                    f"runtime (that needs TensorRT/ModelOpt). Take the fp8 or bf16 "
+                    f"version of the same model instead")
     except Exception:
         pass
     return None

@@ -5,6 +5,7 @@ _gguf_layout_unsupported). Synthetic files only (a few KB), no model download.
 
 Run:  .venv/Scripts/python tests/test_quant_formats.py
 """
+import json
 import os
 import sys
 import tempfile
@@ -337,6 +338,62 @@ def test_int8_convrot_declared_in_header_metadata():
     assert err < 0.02, f"metadata-declared convrot not undone: err {err}"
 
 
+# ---------------------------------------------------------------------------
+# FP4 (NVFP4 / MXFP4): aucun chemin ici. Le piege est qu'un FP4 n'a PAS de dtype F8,
+# donc _safetensors_dequant rend None et le fichier part dans le chemin bf16 normal
+# -- silencieusement. La page Civitai de snofs14 propose justement le meme modele en
+# "MXFP8 and NVFP4 quants": il faut nommer le refus, pas le decouvrir a l'image.
+# ---------------------------------------------------------------------------
+
+def _hdr_with_formats(fmt, dtype="F8_E4M3"):
+    """En-tete synthetique: metadonnees de quantification ComfyUI/ModelOpt."""
+    return {
+        "__metadata__": {"_quantization_metadata": json.dumps({
+            "format_version": "1.0",
+            "layers": {"double_blocks.0.img_attn.qkv": {
+                "format": fmt, "group_size": 32,
+                "orig_dtype": "torch.bfloat16", "orig_shape": [12288, 4096]}},
+        })},
+        "double_blocks.0.img_attn.qkv.weight": {"dtype": dtype, "shape": [12288, 4096]},
+        "double_blocks.0.img_attn.qkv.weight_scale": {"dtype": "U8", "shape": [12288, 128]},
+        "x_embedder.weight": {"dtype": "BF16", "shape": [4, 4]},
+    }
+
+
+def _with_header(hdr, fn):
+    """Execute fn() en substituant l'en-tete lu par _safetensors_unsupported."""
+    real = cz_pipeline._safetensors_header
+    cz_pipeline._safetensors_header = lambda _p: hdr
+    try:
+        return fn()
+    finally:
+        cz_pipeline._safetensors_header = real
+
+
+def test_nvfp4_is_refused_by_name():
+    hdr = _hdr_with_formats("nvfp4", dtype="U8")   # 4 bits empaquetes -> U8
+    why = _with_header(hdr, lambda: cz_pipeline._safetensors_unsupported("fake.safetensors"))
+    assert why and "NVFP4" in why, why
+    assert "fp8 or bf16" in why, why
+    # le piege exact: sans ce refus, rien ne l'arrete
+    assert _with_header(hdr, lambda: cz_pipeline._safetensors_dequant("fake.safetensors")) is None
+
+
+def test_a_f4_dtype_is_refused_even_without_metadata():
+    hdr = {"double_blocks.0.img_attn.qkv.weight": {"dtype": "F4_E2M1", "shape": [12288, 4096]},
+           "x_embedder.weight": {"dtype": "BF16", "shape": [4, 4]}}
+    why = _with_header(hdr, lambda: cz_pipeline._safetensors_unsupported("fake.safetensors"))
+    assert why and "FP4" in why, why
+
+
+def test_mxfp8_is_not_caught_by_the_fp4_guard():
+    """Le controle: snofs14 est du MXFP8 et doit passer, sinon on casse ce qui marche."""
+    hdr = _hdr_with_formats("mxfp8")
+    assert _with_header(hdr, lambda: cz_pipeline._safetensors_unsupported("fake.safetensors")) is None
+    assert _with_header(hdr, lambda: cz_pipeline._safetensors_dequant("fake.safetensors")) == "FP8 scaled"
+
+
+
 if __name__ == "__main__":
     for fn in (test_bf16_passthrough, test_fp8_pure_detect_and_dequant,
                test_fp8_scaled_dequant_math, test_int8_per_row_scale,
@@ -348,6 +405,9 @@ if __name__ == "__main__":
                test_dequant_result_always_lands_on_cpu,
                test_foreign_arch_rejected, test_lora_and_svdq_still_unsupported,
                test_gguf_arch_and_layout,
+               test_nvfp4_is_refused_by_name,
+               test_a_f4_dtype_is_refused_even_without_metadata,
+               test_mxfp8_is_not_caught_by_the_fp4_guard,
                test_gguf_layout_beats_a_mislabelled_architecture,
                test_gguf_foreign_layout_still_rejected,
                test_gguf_qwen_diffusers_layout_is_not_mistaken_for_flux2,
