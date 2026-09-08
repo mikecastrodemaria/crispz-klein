@@ -315,6 +315,15 @@ def test_offload_is_forced_when_the_base_cannot_fit():
         P.BASE_REPO = "huge"
         assert P._effective_offload() == "model", "le 9B ne tient pas: offload force"
 
+        # Un override single-file ne rend PAS le modele plus petit: un FP8/INT8 est
+        # dequantifie en bf16 et repese autant que le transformer d'origine. La
+        # premiere version de la garde sautait ce cas -> plantage au premier pas de
+        # diffusion, apres cinq minutes de dequantification.
+        P.BASE_REPO = "huge"
+        P.ZIMAGE_TRANSFORMER = _ckpt("fp8_9b.safetensors", 4096)
+        assert P._effective_offload() == "model", "un FP8 9B ne tient pas plus qu'un bf16"
+        P.ZIMAGE_TRANSFORMER = None
+
         # carte assez grande -> aucune correction
         P._total_vram_gb = lambda: 80.0
         assert P._effective_offload() == "none"

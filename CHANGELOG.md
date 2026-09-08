@@ -7,6 +7,30 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.25.2 — The VRAM guard skipped exactly the case that needed it
+
+1.20.1 forced the offload when a base repo could not fit, and deliberately
+**skipped single-file overrides** — on the assumption that an override is a
+lighter build. It is not: a FP8/INT8 `.safetensors` is dequantized to **bf16** at
+load and weighs what the original transformer weighs. 16.9 GB on disk became
+18.2 GB resident, plus the 16.4 GB Qwen3 encoder kept in VRAM by the hot-swap:
+35 GB on a 31.8 GB card.
+
+So the guard let it through, and the render died at the first diffusion step on
+`CUDA error: unknown error` inside `rms_norm` — after five minutes of
+dequantization.
+
+The estimate is now built from what will actually be resident: the text encoder
+and VAE, plus the transformer at its **loaded** size — the file size for a GGUF
+(it stays quantized), the variant's bf16 size otherwise, dequantized or not.
+
+    9B, full repo            35.0 GB -> model
+    9B + FP8 -> bf16         35.0 GB -> model      (this case)
+    9B + GGUF (stays Q8)     25.9 GB
+    4B, full repo            15.0 GB -> none
+
+Covered in `tests/test_preset_model_switch.py`.
+
 ## 1.25.1 — Two Gradio warnings per slider move
 
     UserWarning: A function (set_denoise) returned too many output values

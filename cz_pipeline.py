@@ -1901,12 +1901,36 @@ def _is_gguf_path(p):
 # par variante: transformer + encodeur texte Qwen3 + VAE, en bf16. Mesure sur les
 # poids publies. Sert a refuser une configuration qui ne tient pas AVANT de la tenter.
 _BASE_VRAM_GB = {"4B": 15.0, "9B": 35.0}
+# Le TRANSFORMER seul, en bf16 (le reste = encodeur Qwen3 + VAE). Sert a corriger
+# l'estimation quand un checkpoint single-file remplace celui du repo.
+_TRANSFORMER_VRAM_GB = {"4B": 7.2, "9B": 18.2}
 
 
 def _base_vram_need_gb(base=None):
-    """VRAM demandee par le repo de base courant en offload 'none', ou None si la
-    variante est inconnue (auquel cas on ne se mele de rien)."""
-    return _BASE_VRAM_GB.get(_FLUX2_VARIANTS.get(_base_hidden_dim(base)))
+    """VRAM demandee en offload 'none' par ce qui sera REELLEMENT resident, ou None
+    si la variante est inconnue (auquel cas on ne se mele de rien).
+
+    Un override single-file ne rend pas le modele plus petit, sauf en GGUF: un
+    .safetensors FP8/INT8 est DEQUANTIFIE en bf16 au chargement et repese autant que
+    le transformer d'origine (16,9 Go sur disque -> 18,2 Go en VRAM, mesure sur un
+    klein-9B). Compter le fichier, ou pire sauter la verification comme le faisait
+    la premiere version de cette garde, laissait passer une configuration qui ne
+    tient pas -- et l'echec arrive au premier pas de diffusion, apres cinq minutes
+    de dequantification, sur un "CUDA error: unknown error" muet."""
+    v = _FLUX2_VARIANTS.get(_base_hidden_dim(base))
+    total = _BASE_VRAM_GB.get(v)
+    if not total:
+        return None
+    t = ZIMAGE_TRANSFORMER
+    if not t:
+        return total
+    rest = total - _TRANSFORMER_VRAM_GB.get(v, 0.0)      # encodeur texte + VAE
+    if _is_gguf_path(t):                                  # reste quantifie en VRAM
+        try:
+            return rest + os.path.getsize(t) / 1024 ** 3
+        except OSError:
+            return total
+    return rest + _TRANSFORMER_VRAM_GB.get(v, 0.0)        # bf16, dequantifie ou non
 
 
 def _total_vram_gb():
@@ -1934,7 +1958,7 @@ def _effective_offload(tpath=None):
         return off
     if _is_gguf_path(t) and off != "model":
         return "model"
-    if off == "none" and not _is_single_file(t):
+    if off == "none":
         need, have = _base_vram_need_gb(), _total_vram_gb()
         # 0.94: le contexte CUDA, les activations et le decodage VAE vivent aussi la.
         if need and have and need > have * 0.94:
