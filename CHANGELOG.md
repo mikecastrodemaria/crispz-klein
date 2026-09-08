@@ -7,6 +7,32 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.26.3 — A LyCORIS applied nothing, and said nothing
+
+Following the grey `snofs14` render back to its source: SNOFS ships from
+[Ashen3/SNOFS](https://huggingface.co/Ashen3/SNOFS) as a **LoKr**, 1.09 GB, 112
+layers of `lokr_w1` / `lokr_w2` / `alpha` trained with ai-toolkit. Every full
+checkpoint on Civitai is a third-party merge of it — which is why one of them can be
+broken while the adapter is fine.
+
+LyCORIS factorizes the update as a Kronecker (LoKr) or Hadamard (LoHa) product. It is
+not a LoRA, and diffusers has no conversion for it: not one occurrence of `lokr` in
+`loaders/lora_conversion_utils.py`. Both of this app's doors let it through anyway:
+
+- **In the checkpoints folder** it was accepted as a model. The LoRA guard looks for
+  `.lora_A/B` or a `lora_unet_` prefix, and ai-toolkit writes neither — its keys are
+  `diffusion_model.<module>.lokr_w1`. So it went to `from_single_file`.
+- **In the LoRA folder** it was handed straight to `load_lora_weights`, which
+  recognised none of its keys, applied nothing, and raised nothing. The render came
+  out exactly as if no adapter had been selected.
+
+Both are now refused by name, from the header alone, saying which algorithm was found
+and that a merged version — or a merge done with LyCORIS/sd-scripts — is what to use.
+Real PEFT LoRAs are untouched, with a control test, and the whole local library still
+routes exactly as before.
+
+Regression tests in `tests/test_lora_dialect.py`.
+
 ## 1.26.2 — A 4-bit checkpoint would have failed silently
 
 Chasing a uniform grey render from `snofs14Flux2Klein9b_14Distilled`, its Civitai

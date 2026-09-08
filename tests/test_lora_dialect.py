@@ -111,9 +111,59 @@ def test_union_dedupes_on_path_first_weight_wins():
     print("OK test_union_dedupes_on_path_first_weight_wins")
 
 
+# ---------------------------------------------------------------------------
+# 3. LyCORIS (LoKr / LoHa). Ce n'est pas une LoRA: la mise a jour est factorisee en
+#    produit de Kronecker (LoKr) ou de Hadamard (LoHa), et diffusers n'a aucune
+#    conversion pour ces facteurs. Le piege est qu'il n'y a AUCUNE erreur: les cles
+#    d'ai-toolkit s'appellent 'diffusion_model.<module>.lokr_w1' -- ni '.lora_A/B'
+#    ni le prefixe 'lora_unet_' -- donc la garde checkpoint les prenait pour un
+#    modele, et la garde LoRA les passait telles quelles a peft, qui n'appliquait
+#    rien en silence. Releve sur Ashen3/SNOFS (Klein9b, 112 couches x w1/w2/alpha).
+# ---------------------------------------------------------------------------
+
+def _lycoris(name, suffixes):
+    sd = {}
+    for i in range(6):
+        b = f"diffusion_model.double_blocks.{i}.img_attn.proj"
+        sd[b + ".alpha"] = torch.tensor(1.0)
+        for s in suffixes:
+            sd[f"{b}.{s}"] = torch.zeros(4, 4)
+    p = os.path.join(TMP, name)
+    save_file(sd, p)
+    return p
+
+
+def test_a_lokr_is_refused_in_both_folders():
+    p = _lycoris("snofs_like_lokr.safetensors", ("lokr_w1", "lokr_w2"))
+    for why in (P._safetensors_unsupported(p), P._lora_unsupported(p)):
+        assert why and "LoKr" in why, why
+        assert "merged" in why, why
+    print("OK test_a_lokr_is_refused_in_both_folders")
+
+
+def test_a_loha_is_named_as_such():
+    p = _lycoris("loha.safetensors", ("hada_w1_a", "hada_w1_b", "hada_w2_a", "hada_w2_b"))
+    why = P._safetensors_unsupported(p)
+    assert why and "LoHa" in why, why
+    print("OK test_a_loha_is_named_as_such")
+
+
+def test_a_real_peft_lora_still_passes():
+    """Le controle: la garde ne doit toucher a rien de ce qui marchait."""
+    p = _write("real_peft.safetensors",
+               [f"transformer.blocks.{i}.attn.to_q.lora_{ab}.weight"
+                for i in range(6) for ab in ("A", "B")])
+    assert P._lora_unsupported(p) is None
+    assert P._safetensors_unsupported(p) is not None   # une LoRA reste refusee en checkpoint
+    print("OK test_a_real_peft_lora_still_passes")
+
+
 if __name__ == "__main__":
     for fn in (test_detects_the_alternate_dialect, test_normalizes_a_mixed_file,
                test_edit_loras_sync_the_union_with_the_base_set,
-               test_union_dedupes_on_path_first_weight_wins):
+               test_union_dedupes_on_path_first_weight_wins,
+               test_a_lokr_is_refused_in_both_folders,
+               test_a_loha_is_named_as_such,
+               test_a_real_peft_lora_still_passes):
         fn()
     print("All LoRA dialect / namespace tests passed.")

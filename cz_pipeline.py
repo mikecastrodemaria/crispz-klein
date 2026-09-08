@@ -900,6 +900,36 @@ def _variant_refusal(dim, base=None):
             + _variant_fix(dim))
 
 
+# Suffixes de tenseurs propres a LyCORIS. LoKr factorise la mise a jour en produit de
+# Kronecker (w1 (x) w2), LoHa en produit de Hadamard: ni l'un ni l'autre n'est une LoRA
+# au sens de peft, et diffusers n'a AUCUNE conversion pour eux (verifie: pas une seule
+# occurrence de 'lokr' dans loaders/lora_conversion_utils.py).
+_LYCORIS_SUFFIXES = ("lokr_", "hada_")
+
+
+def _lycoris_reason(hdr):
+    """Le refus nomme pour un fichier LyCORIS: quel algorithme, et quoi faire."""
+    algo = "LoHa" if any(k.rsplit(".", 1)[-1].startswith("hada_")
+                         for k in hdr if k != "__metadata__") else "LoKr"
+    return (f"LyCORIS {algo}, not a LoRA and not a checkpoint - diffusers/peft cannot "
+            f"apply it (no conversion exists for its Kronecker/Hadamard factors). Use "
+            f"a version already merged into a base model, or merge it yourself with "
+            f"LyCORIS/sd-scripts first")
+
+
+def _lora_unsupported(path):
+    """Raison (str) si ce fichier ne peut pas etre pose comme LoRA, sinon None.
+    En-tete seule. Sans ca, un LyCORIS part tel quel dans load_lora_weights, qui ne
+    reconnait aucune de ses cles: peft n'applique RIEN et ne dit rien."""
+    try:
+        hdr = _safetensors_header(path)
+    except Exception:
+        return None
+    n = sum(1 for k in hdr if k != "__metadata__"
+            and k.rsplit(".", 1)[-1].startswith(_LYCORIS_SUFFIXES))
+    return _lycoris_reason(hdr) if n >= 4 else None
+
+
 def _quant_metadata_formats(hdr):
     """Les formats de quantification declares dans __metadata__._quantization_metadata
     (ComfyUI, NVIDIA ModelOpt), en minuscules. Ensemble vide si le fichier n'en declare
@@ -937,6 +967,7 @@ def _safetensors_unsupported(path):
         has_qweight = False
         has_fp4 = False
         lora_keys = 0
+        lycoris_keys = 0
         te_keys = 0
         dit_keys = 0
         for k, v in hdr.items():
@@ -959,6 +990,14 @@ def _safetensors_unsupported(path):
             if (".lora_down." in k or ".lora_up." in k or ".lora_A." in k
                     or ".lora_B." in k or k.startswith(("lora_unet_", "lora_te"))):
                 lora_keys += 1
+            if k.rsplit(".", 1)[-1].startswith(_LYCORIS_SUFFIXES):
+                lycoris_keys += 1
+        # LyCORIS (LoKr/LoHa) range avec les checkpoints. Aucune des gardes ci-dessous
+        # ne le voyait: ses cles ne portent NI '.lora_A/B' NI le prefixe 'lora_unet_'
+        # (ai-toolkit ecrit 'diffusion_model.<module>.lokr_w1'), donc il passait pour un
+        # checkpoint et partait dans from_single_file.
+        if lycoris_keys >= 4:
+            return _lycoris_reason(hdr)
         # Fichier LoRA range dans le dossier checkpoints (erreur classique): le charger
         # comme transformer envoie diffusers chercher une config par defaut (SD1.5) ->
         # 404 'stable-diffusion-v1-5 does not appear to have a file named config.json'.
@@ -2202,6 +2241,13 @@ def _sync_adapters(pipe, wanted, applied, force=False, tag="LoRA"):
         names, weights = [], []
         for i, (p, w) in enumerate(wanted):
             if os.path.isfile(p):
+                # Format que peft ne sait pas poser (LyCORIS LoKr/LoHa): on le nomme et
+                # on passe au suivant. Le laisser filer serait pire qu'une erreur: le
+                # rendu sortirait sans le LoRA, identique a un rendu sans lui.
+                why = _lora_unsupported(p)
+                if why:
+                    _log(f"{tag} SKIPPED, {os.path.basename(p)}: {why}")
+                    continue
                 an = f"cz_lora_{i}"
                 _log(f"applying {tag}: {os.path.basename(p)} (weight {w})")
                 # Passer le dossier + weight_name (et non le chemin complet) : sinon
