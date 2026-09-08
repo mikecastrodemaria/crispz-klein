@@ -7,6 +7,34 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.26.1 — The pre-cache refused to pre-cache
+
+`rebuild_cache.bat` exists to pay the fp8/int8 dequantization once, offline, instead
+of losing minutes to it mid-session. On this fork it refused to run at all, for two
+reasons inherited from crispz-studio.
+
+**It sized entries with the Qwen figure.** `ENTRY_GB = 38.0` is the weight of a
+bf16 Qwen 20B transformer; a klein-9B is **16.9 GB** and a 4B **7.2 GB**. On a
+9-checkpoint library it announced 266 GB where 145 GB were needed, compared that to
+`dequant_cache_max_gb` and stopped with `exit(1)`. Each entry is now **measured on
+the file header** — no load, and it matches the bytes already on disk to the tenth of
+a gigabyte.
+
+**It skipped the other variant.** `_safetensors_unsupported()` starts with the
+variant guard, so with a 9B base every 4B checkpoint was dropped from the
+pre-fill — yet the dequant depends only on the file (the cache key is
+path+size+mtime), and switching base then repaid the conversion, which is the one
+thing this cache exists to avoid. That refusal, **and only it**, is now neutralised:
+the tool compares the reason to `_flux2_variant_mismatch()`, so a LoRA or a text
+encoder is still skipped by name.
+
+Along the way it now checks free disk space, names the exact
+`dequant_cache_max_gb` value to set rather than asking for "more", and prints the
+weight of every entry. The cap's help text quoted the Qwen size too, and the README
+never mentioned the tool at all — both fixed.
+
+Regression tests in `tests/test_precache_variants.py`.
+
 ## 1.26.0 — Picking a model uses what we already know about it
 
 Selecting a checkpoint set steps and CFG from `profile_for_model()`, which matches

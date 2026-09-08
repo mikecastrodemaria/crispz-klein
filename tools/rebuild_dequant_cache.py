@@ -3,7 +3,7 @@ FP8/INT8 des dossiers de modeles, pour ne pas payer la conversion a la premiere
 utilisation (elle bloque alors l'UI plusieurs minutes en plein travail).
 
 Usage:
-    .venv/Scripts/python tools/rebuild_dequant_cache.py [--list] [--cpu]
+    .venv/Scripts/python tools/rebuild_dequant_cache.py [--list] [--cpu] [--only SUBSTR]
     (ou double-clic sur rebuild_cache.bat a la racine)
 
 - REPRISE GRATUITE: un checkpoint deja en cache est saute en une seconde -> relancable
@@ -12,27 +12,36 @@ Usage:
 - --cpu  : dequantification sans toucher au GPU (par defaut: GPU si present, cf.
   convert_device). A preferer si un rendu tourne en meme temps.
 
+Les DEUX variantes sont pre-remplies, 4B comme 9B, quelle que soit celle du repo de
+base courant: la dequantification ne depend que du fichier (la clef de cache est
+chemin+taille+mtime), et le but est justement que basculer de base soit instantane.
+Seul le CHARGEMENT exige que la variante corresponde au repo choisi.
+
 Ne concerne QUE les .safetensors FP8/INT8:
   - .gguf          -> reste quantifie en VRAM, aucune dequantification a cacher;
   - bf16/fp16      -> rien a dequantifier (un cache serait une copie bf16 -> bf16),
                       y compris au layout ComfyUI ou seul le prefixe est retire;
   - LoRA/SVDQuant  -> non chargeables, ignores avec leur raison.
 
-Chaque entree pese autant que le build BF16 complet (~38 Go pour un transformer Qwen
-20B): verifie que dequant_cache_max_gb (config.txt) couvre le total, sinon les
-premieres conversions seraient evincees par les dernieres et le cache ne servirait
-a rien. Supprimer cache/dequant est toujours sur (il se reconstruit a la demande).
+Chaque entree pese le poids du build BF16, MESURE sur l'en-tete du fichier et non
+estime: ~16.9 Go pour un transformer klein-9B, ~7.2 Go pour un 4B, davantage pour un
+bundle qui embarque son encodeur texte. Le total est verifie contre
+dequant_cache_max_gb (config.txt) ET contre la place libre du disque, sinon les
+premieres conversions seraient evincees par les dernieres et le cache ne servirait a
+rien. Supprimer cache/dequant est toujours sur (il se reconstruit a la demande).
 """
 import os
 import sys
 import gc
+import math
+import shutil
 import time
 
 USAGE = """Usage: rebuild_dequant_cache.py [--list] [--cpu] [--only SUBSTR ...]
   --list          show what would be converted, convert nothing
   --cpu           dequantize on the CPU (GPU busy with a render)
   --only SUBSTR   only checkpoints whose file name contains SUBSTR (repeatable,
-                  case-insensitive), e.g. --only jibMix --only 2511
+                  case-insensitive), e.g. --only rayKlein --only fp8
 Any other option (-h, --help, a typo) prints this and exits: the tool never
 starts a multi-hour conversion by accident."""
 
@@ -62,8 +71,29 @@ import cz_pipeline as czp  # noqa: E402
 if "--cpu" in sys.argv:
     czp.CONFIG["convert_device"] = "cpu"
 
-# Taille d'une entree = le build BF16 du transformer (mesure: 38.1 Gio pour Qwen 20B).
-ENTRY_GB = 38.0
+# Tenseurs qui ne survivent PAS au dequant: les facteurs d'echelle et le descripteur
+# comfy_quant. Les compter gonflerait l'estimation d'un build a scales par ligne.
+_SCALE_SUFFIXES = ("_scale", "_scale_inv", ".scale_weight", ".comfy_quant")
+
+
+def bf16_gb(path):
+    """Poids du bf16 qui sera ecrit dans le cache, lu a l'EN-TETE seule (aucun
+    chargement). Recoupe avec le cache existant: 16.9 Go annonces, 16.9 Go sur le
+    disque pour rayKlein9bBFS_fp8V2."""
+    try:
+        hdr = czp._safetensors_header(path)
+    except Exception:
+        return 0.0
+    n = 0
+    for k, v in hdr.items():
+        if k == "__metadata__" or not isinstance(v, dict) or k.endswith(_SCALE_SUFFIXES):
+            continue
+        c = 1
+        for s in (v.get("shape") or []):
+            c *= int(s)
+        n += c
+    return n * 2 / 1024 ** 3
+
 
 if czp._dequant_cache_dir() is None:
     print("dequant_cache est sur 'off' dans config.txt: rien a pre-remplir.")
@@ -79,7 +109,14 @@ for d in czp._checkpoint_dirs():
             continue
         if ONLY and not any(s in f.lower() for s in ONLY):
             continue
+        dim = czp._flux2_hidden_dim(p)
         bad = czp._safetensors_unsupported(p)
+        # Variante differente du repo de base COURANT: ca n'empeche pas de pre-remplir
+        # son cache, seulement de la charger maintenant. On la convertit quand meme --
+        # sinon basculer 4B <-> 9B repaierait la conversion, ce qui est exactement ce
+        # que ce script existe pour eviter.
+        if bad and bad == czp._flux2_variant_mismatch(dim):
+            bad = None
         if bad:
             skipped.append((f, bad))
             continue
@@ -87,15 +124,16 @@ for d in czp._checkpoint_dirs():
         if not dq:
             skipped.append((f, "bf16/fp16, rien a dequantifier"))
             continue
+        tag = f"{dq}, {czp._variant_name(dim)}" if dim else dq
         cached = czp._dequant_cache_path(p)
-        (done if cached and os.path.isfile(cached) else todo).append((p, dq))
+        (done if cached and os.path.isfile(cached) else todo).append((p, tag, bf16_gb(p)))
 
 for f, why in skipped:
     print(f"SKIP {f}: {why}")
-for p, dq in done:
-    print(f"DEJA EN CACHE {os.path.basename(p)} ({dq})")
-for p, dq in todo:
-    print(f"A CONVERTIR   {os.path.basename(p)} ({dq})")
+for p, tag, gb in done:
+    print(f"DEJA EN CACHE {os.path.basename(p)} ({tag}, {gb:.1f} Go)")
+for p, tag, gb in todo:
+    print(f"A CONVERTIR   {os.path.basename(p)} ({tag}, {gb:.1f} Go)")
 
 if not todo and not done:
     print("\nAucun checkpoint FP8/INT8 trouve dans:", czp._checkpoint_dirs(),
@@ -103,27 +141,41 @@ if not todo and not done:
     sys.exit(0)
 
 cap = czp.DEQUANT_CACHE_MAX_GB
-need = (len(todo) + len(done)) * ENTRY_GB
-print(f"\n{len(todo) + len(done)} checkpoint(s) a couvrir (~{need:.0f} Go de cache; "
-      f"plafond dequant_cache_max_gb = {cap:.0f} Go"
-      + (", 0 = illimite)" if cap <= 0 else ")"))
+todo_gb = sum(g for _p, _t, g in todo)
+need = todo_gb + sum(g for _p, _t, g in done)
+print(f"\n{len(todo) + len(done)} checkpoint(s) a couvrir: {need:.0f} Go de cache au "
+      f"total, dont {todo_gb:.0f} Go a ecrire maintenant. Plafond "
+      f"dequant_cache_max_gb = " + ("illimite (0)." if cap <= 0 else f"{cap:.0f} Go."))
+
+blocked = False
 if 0 < cap < need:
-    print(f"ATTENTION: plafond {cap:.0f} Go < ~{need:.0f} Go necessaires -> les "
-          f"premieres conversions seraient evincees par les dernieres et le cache "
-          f"ne servirait a rien.\nMonte dequant_cache_max_gb dans config.txt "
-          f"(>= {need:.0f}) avant de continuer.")
-    if "--list" not in sys.argv:
-        sys.exit(1)
+    blocked = True
+    advise = int(math.ceil(need / 10.0) * 10) + 10
+    print(f"ATTENTION: plafond {cap:.0f} Go < {need:.0f} Go necessaires -> les "
+          f"premieres conversions seraient evincees par les dernieres et le cache ne "
+          f"servirait a rien.\nMets \"dequant_cache_max_gb\": {advise} dans "
+          f"config.txt (ou 0 pour illimite) avant de continuer.")
+try:
+    free = shutil.disk_usage(czp._dequant_cache_dir()).free / 1024 ** 3
+except OSError:
+    free = None
+if free is not None and todo_gb and free < todo_gb:
+    blocked = True
+    print(f"ATTENTION: {free:.0f} Go libres sur le disque du cache pour {todo_gb:.0f} "
+          f"Go a ecrire -> la conversion s'arreterait en route. Fais de la place, ou "
+          f"pointe \"dequant_cache\" vers un autre disque dans config.txt.")
+if blocked and "--list" not in sys.argv:
+    sys.exit(1)
 
 if "--list" in sys.argv:
     sys.exit(0)
 
 t_all = time.time()
 ok = fail = 0
-for i, (p, dq) in enumerate(todo, 1):
+for i, (p, tag, gb) in enumerate(todo, 1):
     name = os.path.basename(p)
     t0 = time.time()
-    print(f"\n[{i}/{len(todo)}] {name} ({dq}) ...")
+    print(f"\n[{i}/{len(todo)}] {name} ({tag}, {gb:.1f} Go) ...")
     try:
         sd = czp._load_dequant_state_dict(p)
         czp._dequant_cache_store(p, sd)

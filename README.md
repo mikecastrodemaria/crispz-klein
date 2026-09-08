@@ -590,6 +590,17 @@ fit, so the offload is forced to `model` and every image pays the weight transfe
 format, and the loader dequantizes them to bf16 — 8.8 GB on disk, ~18 GB in VRAM again.
 They save disk, not memory. Only GGUF stays quantized at run time.
 
+**Pre-loading the dequant, once.** That conversion is not free: the first load of an
+fp8/int8 checkpoint reads and rewrites the whole file — minutes, in the middle of a
+session. The bf16 result lands in `cache/dequant`, and the next loads of that same
+file become a plain single-file read (seconds). `rebuild_cache.bat --list` shows what
+would be converted, what each entry weighs once expanded (~17 GB for a klein-9B
+transformer, ~7 GB for a 4B) and whether `dequant_cache_max_gb` covers the total —
+if it does not, the last conversions evict the first ones and the cache buys nothing.
+Without `--list` it converts, and it resumes: anything already cached is skipped in a
+second. Both variants are pre-filled whatever base you currently run, so switching
+4B ↔ 9B never repays the conversion. Deleting `cache/dequant` is always safe.
+
 **A local 9B `.safetensors` does not spare you the gated repo either.** A single-file
 checkpoint only replaces the *transformer*; the VAE, the text encoder and the
 architecture config still come from the gated base repo. An fp8 or GGUF 9B build
