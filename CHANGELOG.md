@@ -7,6 +7,58 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.30.0 — The text encoder computed eight blocks for nothing
+
+FLUX.2 does not read the LLM's output. It stacks the hidden states of three
+**intermediate** layers — `hidden_states_layers = (9, 18, 27)`, which is why
+`context_embedder` is three times the encoder width: `(4096, 12288)` on the 9B,
+`(3072, 7680)` on the 4B. Everything after layer 27, plus the `lm_head`, is computed
+for every image and thrown away: on the 9B that is eight blocks of a Qwen3-8B and a
+projection over 152 000 tokens.
+
+Removing them is **exact, not approximate**. In a causal transformer `hidden_states[k]`
+is the output *after* k blocks, so later blocks cannot influence it. Verified bit for
+bit on the real model rather than assumed — `torch.equal` true on all three layers
+read:
+
+| | before | after |
+|---|---|---|
+| klein-9B encoder | 15.3 GB | **11.2 GB** |
+| klein-4B encoder | 8.2 GB | **6.0 GB** |
+| encode (512 tokens, fixed cost) | 5.0 s | **3.2 s** |
+
+The layer indices are **read from the installed diffusers**, never hardcoded — if a
+future version changed `(9, 18, 27)`, a frozen constant would produce wrong embeddings
+*in silence*, the worst failure available here. Unreadable means nothing is trimmed,
+and it says so.
+
+**Two traps found while writing it, both now under test.**
+
+The first version looked for `_get_qwen_prompt_embeds`; diffusers calls it
+`_get_qwen3_prompt_embeds`. The trim therefore never fired — and it announced that,
+correctly. The method is now found by its *parameter*, so a rename cannot break it
+again.
+
+The second was the real damage: the VRAM budget subtracted the 4 GB without checking
+the trim had happened. Measured consequence — **29.7 GB announced, 32.3 GB actually
+resident, 0.0 GB free**. And on Windows that does not raise: it spills into shared
+memory and rendering collapses with no message at all. The budget now follows
+`_ENCODER_TRIMMED`, the deed, never `TRIM_TEXT_ENCODER`, the intent.
+
+That measurement also killed the tempting conclusion. A trimmed 9B needs 29.7 GB, and
+the old `need > have * 0.94` threshold sat at 29.9 — it would have flipped a 32 GB card
+to `offload: none` on **0.2 GB** of announced margin. The margin is now **absolute**
+(`vram_headroom_gb`, default 4.0): the CUDA context, the diffusion activations and the
+VAE decode cost roughly the same whatever the card, where a percentage tightens exactly
+on the small ones. The 9B keeps its offload until someone measures what those
+activations really cost.
+
+The trim still pays under offload: 4 GB less to move across PCIe on every embed-cache
+miss, and a 1.6× faster encode.
+
+Regression tests in `tests/test_encoder_trim.py`. New config keys `trim_text_encoder`
+and `vram_headroom_gb`.
+
 ## 1.29.0 — An "Edit LoRA weight" axis, and a grid that survives a newline
 
 Two things reported together, both in the X/Y/Z grid.

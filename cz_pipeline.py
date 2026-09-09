@@ -1948,11 +1948,13 @@ def free_vram():
     """Libere le pipeline de base + les pipelines derives et rend la VRAM
     (palier 3: unload sur inactivite ou endpoint /unload). Rechargement paresseux."""
     global _BASE_PIPE, _DERIVED, _LOADED_KEY, _APPLIED_LORAS, _APPLIED_LOKRS
+    global _ENCODER_TRIMMED
     _BASE_PIPE = None
     _DERIVED = {}
     _LOADED_KEY = None
     _APPLIED_LORAS = []      # plus de pipe -> plus d'adaptateur pose
     _APPLIED_LOKRS = []      # ... ni de poids ou une LoKr serait fusionnee
+    _ENCODER_TRIMMED = False # ... ni d encodeur elague
     _embed_cache_clear(" (VRAM freed)")
     gc.collect()
     if DEVICE == "cuda":
@@ -2069,7 +2071,11 @@ def _is_gguf_path(p):
 # VRAM que demande un repo de base pose ENTIEREMENT sur le GPU (offload 'none'),
 # par variante: transformer + encodeur texte Qwen3 + VAE, en bf16. Mesure sur les
 # poids publies. Sert a refuser une configuration qui ne tient pas AVANT de la tenter.
-_BASE_VRAM_GB = {"4B": 15.0, "9B": 35.0}
+_BASE_VRAM_GB = {"4B": 15.6, "9B": 33.7}
+# Ce que _trim_text_encoder retire (blocs jamais lus + lm_head). Mesure sur les poids
+# reels, pas estime. Compte dans le budget UNIQUEMENT si l'elagage est actif: sinon on
+# annoncerait une place qu'on ne libere pas.
+_ENCODER_TRIM_GB = {"4B": 2.2, "9B": 4.0}
 # Le TRANSFORMER seul, en bf16 (le reste = encodeur Qwen3 + VAE). Sert a corriger
 # l'estimation quand un checkpoint single-file remplace celui du repo.
 _TRANSFORMER_VRAM_GB = {"4B": 7.2, "9B": 18.2}
@@ -2090,6 +2096,8 @@ def _base_vram_need_gb(base=None):
     total = _BASE_VRAM_GB.get(v)
     if not total:
         return None
+    if _ENCODER_TRIMMED:
+        total -= _ENCODER_TRIM_GB.get(v, 0.0)
     t = ZIMAGE_TRANSFORMER
     if not t:
         return total
@@ -2107,6 +2115,118 @@ def _total_vram_gb():
         return torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
     except Exception:
         return None
+
+
+# ----------------------------------------------------------------------------
+# Elagage de l'encodeur texte. FLUX.2 ne lit PAS la sortie du LLM: il empile les etats
+# caches de trois couches INTERMEDIAIRES (d'ou context_embedder large de 3 x hidden).
+# Les couches au-dela de la derniere lue, et le lm_head, sont donc calcules a chaque
+# image puis jetes -- sur le 9B cela fait huit blocs d'un Qwen3-8B et une projection
+# sur 152 000 jetons.
+#
+# Dans un transformer causal, hidden_states[k] est la sortie APRES k blocs: les blocs
+# suivants ne peuvent pas l'influencer. L'elagage est donc exact, pas approche.
+# Verifie bit a bit sur le 9B (torch.equal sur les trois couches lues), pas suppose:
+#   15.3 Go -> 11.2 Go, encodage 5.0 s -> 3.2 s, sorties IDENTIQUES.
+#   4B: 8.2 Go -> 6.0 Go.
+#
+# Les indices de couches sont LUS dans la signature de diffusers, jamais codes en dur:
+# si une version amont changeait (9, 18, 27), une constante figee produirait des
+# embeddings faux EN SILENCE -- le pire mode d'echec possible ici. Illisible = on
+# n'elague pas, et on le dit.
+# ----------------------------------------------------------------------------
+TRIM_TEXT_ENCODER = bool(CONFIG.get("trim_text_encoder", True))
+# L'elagage a-t-il REELLEMENT eu lieu sur l'encodeur courant ? Le budget VRAM ne
+# defalque son gain que si ce drapeau est vrai -- jamais sur la seule INTENTION.
+# Mesure a l'appui: avec le nom de methode faux, l'elagage etait saute (annonce), mais
+# le budget defalquait quand meme 4 Go. Resultat: 29.7 Go annonces, 32.3 Go reellement
+# residents, VRAM a 0.0 Go libre. C'est exactement le mode d'echec que la garde
+# d'offload existe pour empecher, reintroduit par la porte de derriere.
+_ENCODER_TRIMMED = False
+
+
+def _encoder_layers_used(pipe):
+    """Le plus grand indice d'etat cache que le pipeline lit reellement, ou None si la
+    signature amont ne le dit pas.
+
+    On CHERCHE la methode qui porte `hidden_states_layers` au lieu de la nommer: elle
+    s'appelle `_get_qwen3_prompt_embeds` ici, `_get_qwen_prompt_embeds` ailleurs dans
+    la meme famille, et deviner ce nom a deja coute une mesure (l'elagage ne se
+    declenchait pas, en silence pour le budget VRAM)."""
+    try:
+        import inspect
+        for name in dir(type(pipe)):
+            if not name.startswith("_get_"):
+                continue
+            fn = getattr(type(pipe), name, None)
+            if not callable(fn):
+                continue
+            try:
+                p = inspect.signature(fn).parameters.get("hidden_states_layers")
+            except (TypeError, ValueError):
+                continue
+            if p is None or p.default is inspect.Parameter.empty:
+                continue
+            layers = [int(x) for x in (p.default or ())]
+            if layers:
+                _dbg(f"hidden states read by {name}: {sorted(layers)}")
+                return max(layers)
+    except Exception as e:
+        _dbg(f"hidden_states_layers unreadable: {e}")
+    return None
+
+
+def _trim_text_encoder(pipe):
+    """Retire de l'encodeur les blocs jamais lus et le lm_head. Sans effet sur les
+    embeddings (prouve), a appeler AVANT tout deplacement/offload."""
+    global _ENCODER_TRIMMED
+    _ENCODER_TRIMMED = False        # encodeur neuf: rien d'elague tant qu'on n'a pas agi
+    if not TRIM_TEXT_ENCODER:
+        return
+    enc = getattr(pipe, "text_encoder", None)
+    layers = getattr(getattr(enc, "model", None), "layers", None)
+    if enc is None or layers is None:
+        return
+    last = _encoder_layers_used(pipe)
+    if last is None:
+        _log("text encoder NOT trimmed: this diffusers build does not expose which "
+             "hidden layers the pipeline reads; keeping every layer is the only safe "
+             "answer (set `trim_text_encoder` to false to silence this).")
+        return
+    keep = last + 1                      # hidden_states[k] = sortie du bloc k
+    if len(layers) <= keep:
+        return
+    before = sum(p.numel() for p in enc.parameters()) * 2 / 1024 ** 3
+    dropped = len(layers) - keep
+    try:
+        enc.model.layers = torch.nn.ModuleList(list(layers)[:keep])
+        if not isinstance(getattr(enc, "lm_head", None), torch.nn.Identity):
+            enc.lm_head = torch.nn.Identity()
+    except Exception as e:
+        _log(f"text encoder NOT trimmed ({e}); nothing lost, it just stays whole")
+        return
+    after = sum(p.numel() for p in enc.parameters()) * 2 / 1024 ** 3
+    _ENCODER_TRIMMED = True
+    _log(f"text encoder trimmed: {dropped} unread block(s) + lm_head dropped "
+         f"({len(layers)} -> {keep} layers, {before:.1f} -> {after:.1f} GB). The "
+         f"pipeline only reads hidden states up to layer {last}, so the embeddings "
+         f"are bit-identical.")
+
+
+# Marge VRAM reservee a ce qui n'est PAS un poids: contexte CUDA, activations de la
+# diffusion, decodage VAE. Absolue et non proportionnelle -- ce cout ne depend pas de
+# la taille de la carte, alors qu'un pourcentage se resserre justement sur les petites.
+#
+# L'ancien 0.94 laissait 1.9 Go sur une carte de 32. Or l'elagage de l'encodeur fait
+# tomber le 9B a 29.7 Go, donc SOUS ce seuil: il serait passe en 'none' avec 0.2 Go de
+# marge annoncee. Et sous Windows ca ne plante pas -- ca DEBORDE en memoire partagee
+# (mesure: 32.3 Go residents sur une carte de 31.8, 0.0 Go libre, aucune exception),
+# apres quoi le rendu s'effondre sans le moindre message. Tant que le cout reel des
+# activations n'est pas mesure, on reste large. Reglable: `vram_headroom_gb`.
+try:
+    _VRAM_HEADROOM_GB = float(CONFIG.get("vram_headroom_gb", 4.0))
+except (TypeError, ValueError):
+    _VRAM_HEADROOM_GB = 4.0
 
 
 def _effective_offload(tpath=None):
@@ -2129,8 +2249,7 @@ def _effective_offload(tpath=None):
         return "model"
     if off == "none":
         need, have = _base_vram_need_gb(), _total_vram_gb()
-        # 0.94: le contexte CUDA, les activations et le decodage VAE vivent aussi la.
-        if need and have and need > have * 0.94:
+        if need and have and need + _VRAM_HEADROOM_GB > have:
             return "model"
     return off
 
@@ -2748,6 +2867,8 @@ def _ensure_base():
     # LoRA Qwen-Image (sur le transformer du base -> partage par les pipes derives).
     # force=True: pipe neuf, aucun adaptateur pose -> on (re)pose tout.
     _APPLIED_LORAS = []
+    # Meme fenetre que les LoKr: encore sur le CPU, sans hook accelerate pose.
+    _trim_text_encoder(pipe)
     # Les LoKr AVANT tout deplacement/offload: le transformer est encore sur le CPU,
     # en un seul morceau, sans hook accelerate -- c'est la seule fenetre ou une fusion
     # dans les poids est simple et sure.
