@@ -7,6 +7,44 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.28.0 — A bench that separates loading from running
+
+`bench_models.bat` runs every model in the library through three images and reports
+three timings that this session kept proving are not the same thing:
+
+- **loading** — pipeline ready, from an empty state (`free_vram` before each model,
+  otherwise it would measure a hot transformer swap, not a load);
+- **first image** — always slower: CUDA kernels, empty embed cache, weights climbing
+  onto the GPU;
+- **steady state** — the mean of the rest, the only figure comparable between models.
+
+Conflating the last two is how `kleinForeskin` got called "56x slower, not worth it"
+at 616 s, when the next render of the same model took **9.6 s**. The bench refuses to
+let that confusion happen again.
+
+**Both variants are covered.** A 4B checkpoint will not load on a 9B base, so models
+are grouped by variant and the base repo is switched once per group rather than once
+per file. GGUF variants are read with `_gguf_hidden_dim`, without which a 4B GGUF came
+out variant-less, got paired with whatever base was current, and always failed.
+
+**Steps come from each model's own profile** — the CivitAI consensus, the undistilled
+flag, then the file name: the same logic the Models tab uses since 1.26.0. What matters
+is how long a model takes to produce a usable image, not a per-step figure levelled
+artificially; the per-step cost is reported alongside for the other reading, and
+`--steps N` forces one value for everyone.
+
+**Two confounds are named rather than hidden.** A `Cache` column says whether the
+dequant cache was warm before the test — the same file takes seconds with its bf16
+cached and minutes without, so the loading column only compares at equal cache. And the
+report carries a warning that the OS file cache moves it too: the same model, measured
+twice in a row, went from 24.1 s to 10.3 s untouched. First image and steady state are
+the reliable numbers.
+
+Resumable: each model is written to `bench/results.json` the moment it finishes and the
+report is rewritten immediately, so a cut loses only the model in flight. `--list`
+shows the plan without generating anything, `--only` filters, and files the app will
+not load are listed with their reason rather than silently absent.
+
 ## 1.27.1 — A LoRA for the wrong variant, said in one sentence
 
 Selecting a 4B checkpoint while the base repo is the 9B leaves the base on 9B — the
