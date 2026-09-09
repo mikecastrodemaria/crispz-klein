@@ -580,11 +580,24 @@ selection rather than at the next restart.
 `flux-2-klein-9b.safetensors` at the root, the single-file build, which
 `from_pretrained` does not fetch.
 
-**Making the 9B usable on a 32 GB card.** Measured on an RTX 5090 (31.8 GB), ~1 Mpx,
-4 steps: the full bf16 base — transformer 18.2 GB + Qwen3 8B encoder 16.4 GB — does not
-fit, so the offload is forced to `model` and every image pays the weight transfer:
-**50 s**. A **GGUF** 9B build as the transformer override stays quantized in VRAM
-(Q8_0, ~9 GB instead of 18) and brings the same render down to **10.9 s**.
+**Making the 9B usable on a 32 GB card.** The full bf16 base — transformer 18.2 GB +
+Qwen3-8B encoder 15.3 GB — does not fit in 31.8 GB, so the offload is forced to `model`.
+Re-measured 2026-09-09 on an RTX 5090, 1024x1024, 4 steps, same prompt, encoder trimmed:
+
+| | load | first image | steady state | peak VRAM |
+|---|---|---|---|---|
+| bf16 base | ~25 s | ~35 s | **6.4–9.1 s** | 17.7 GB |
+| GGUF override (Q8_0, 9.1 GB) | ~83 s | ~19 s | **6.0 s** | 14.4 GB |
+
+An earlier edition of this page said **50 s** for the bf16 base and sold GGUF as the
+cure at 10.9 s. Both numbers are gone: 50 s is what the **first** image costs today, not
+what every image costs — the figure conflated loading with running, the exact mistake
+`bench_models.bat` exists to prevent. Two consecutive images vary by as much as the two
+configurations differ from each other, so do not read a 13 % gap as a verdict.
+
+GGUF still earns its place, just not where the old text claimed: **3.3 GB less peak
+VRAM** and a first image roughly twice as quick. It costs 83 s to load, so it pays on a
+long session with one model, not on a grid that switches checkpoints.
 
 `.safetensors` fp8/int8 builds do **not** help here: they are the ComfyUI "scaled"
 format, and the loader dequantizes them to bf16 — 8.8 GB on disk, ~18 GB in VRAM again.

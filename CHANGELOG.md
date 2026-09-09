@@ -7,6 +7,40 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.30.2 — The 9B is not slow, and has not been for a while
+
+The README said the bf16 9B costs **50 s** an image under offload, and sold a GGUF
+override as the cure at 10.9 s. I repeated that figure all day. Re-measured on the same
+card, same resolution, same 4 steps: **6.8 s**.
+
+The old number is what the **first** image costs today (~35 s). It conflated loading
+with running — the exact mistake `bench_models.bat` was written to prevent, sitting
+unnoticed in this project's own front page.
+
+| | load | first image | steady state | peak VRAM |
+|---|---|---|---|---|
+| bf16 base | ~25 s | ~35 s | 6.4–9.1 s | 17.7 GB |
+| GGUF override (Q8_0, 9.1 GB) | ~83 s | ~19 s | 6.0 s | 14.4 GB |
+
+GGUF keeps a real advantage — 3.3 GB less peak VRAM, first image twice as quick — but
+not the 5x it was credited with, and it costs 83 s to load.
+
+**The encoder trim, honestly.** A control run with `trim_text_encoder` off gives 6.8 s
+against 6.4–9.1 s with it on: indistinguishable, because the embed cache means a
+repeated prompt never moves the encoder at all. The trim buys 4.0 GB of weights, 1.8 GB
+of peak VRAM and a 1.6x faster encode — not render time. 1.30.0's note said it "still
+pays under offload"; that is now qualified with the measurement.
+
+**And the trimmed 9B still does not fit without offload.** Forced to `none` it loads —
+28.3 GB resident, **1.1 GB free** — which is below what diffusion needs, and on Windows
+that does not raise: it spills into shared memory and collapses silently. The probe
+refuses to generate under 1.5 GB free rather than turn a measurement into an hour-long
+hang. The 4.0 GB `vram_headroom_gb` chosen defensively in 1.30.0 is now chosen on
+evidence.
+
+Also verified end to end on the GPU: the trim does not break rendering, and the SNOFS
+LoKr merges (144/144 tensors, 24 s) and produces images.
+
 ## 1.30.1 — The LoRA guard fired on one file out of seventy
 
 1.27.1 added a guard so a LoRA trained for the wrong variant would say so in one
@@ -90,6 +124,13 @@ activations really cost.
 
 The trim still pays under offload: 4 GB less to move across PCIe on every embed-cache
 miss, and a 1.6× faster encode.
+
+**Measured afterwards, and it does not show in render time.** Same base, same prompt,
+with and without the trim: 6.4–9.1 s against 6.8 s of steady state — indistinguishable,
+because with the embed cache a repeated prompt never moves the encoder at all. What the
+trim actually buys, measured: **4.0 GB of weights, 1.8 GB of peak VRAM (19.5 → 17.7),
+and the encode itself**. The PCIe saving is real but only visible on a workload that
+keeps changing prompts.
 
 Regression tests in `tests/test_encoder_trim.py`. New config keys `trim_text_encoder`
 and `vram_headroom_gb`.
