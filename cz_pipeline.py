@@ -802,25 +802,46 @@ def _flux2_hidden_dim(path):
         (k, v.get("shape")) for k, v in hdr.items() if k != "__metadata__")
 
 
-# Signatures de dimension COTE LoRA. Une LoRA ne contient aucun poids du modele, mais
-# ses deux matrices en gardent la trace: lora_A projette DEPUIS l'entree de la couche
-# (forme [rang, entree]), lora_B VERS sa sortie ([sortie, rang]). Sur les projections
-# dont l'entree -- ou la sortie -- EST la dimension cachee, la forme la donne donc
-# directement, sans lire un seul poids.
-_FLUX2_LORA_IN_SIGS = ("attn.to_q.lora_A.weight", "attn.to_k.lora_A.weight",
-                       "attn.to_v.lora_A.weight", "attn.add_q_proj.lora_A.weight",
-                       "attn.to_qkv_mlp_proj.lora_A.weight")
-_FLUX2_LORA_OUT_SIGS = ("attn.to_q.lora_B.weight", "attn.to_out.lora_B.weight",
-                        "attn.to_out.0.lora_B.weight")
+def _lora_side(key):
+    """'A' (projection d'entree), 'B' (projection de sortie) ou None.
+
+    Reconnu par SEGMENT et non par suffixe: peft intercale le nom de l'adaptateur
+    ('...lora_A.default.weight'), et un suffixe fige rate ce cas -- releve en vrai sur
+    une LoRA de la bibliotheque. Les trois dialectes vivants sont couverts:
+    lora_A/lora_B (peft), lora_down/lora_up et lora.down/lora.up."""
+    parts = key.split(".")
+    for i, seg in enumerate(parts):
+        if seg in ("lora_A", "lora_down"):
+            return "A"
+        if seg in ("lora_B", "lora_up"):
+            return "B"
+        if seg == "lora" and i + 1 < len(parts):
+            if parts[i + 1] == "down":
+                return "A"
+            if parts[i + 1] == "up":
+                return "B"
+    return None
 
 
 def _flux2_lora_hidden_dim(path):
     """Dimension cachee du modele sur lequel une LoRA a ete entrainee, en-tete seule.
 
-    None des qu'il y a le moindre doute: on ne connait pas toutes les LoRA du monde,
-    et ecarter une LoRA valide sur une signature mal comprise serait pire que le
-    message d'erreur qu'on cherche a remplacer. Seule une dimension DECLAREE dans
-    _FLUX2_VARIANTS est retenue."""
+    Une LoRA ne contient aucun poids du modele, mais ses deux matrices en gardent la
+    trace: lora_A projette DEPUIS l'entree de la couche ([rang, entree]), lora_B VERS
+    sa sortie ([sortie, rang]). Partout ou cette entree -- ou cette sortie -- EST la
+    dimension cachee, la forme la donne, sans lire un seul poids.
+
+    On ne nomme AUCUNE couche. La premiere version listait les suffixes du layout
+    diffusers ('attn.to_q.lora_A.weight'...) et se croyait complete: sur une
+    bibliotheque reelle de 70 LoRA klein, elle n'en reconnaissait qu'une seule. Les
+    autres sont au layout FLUX d'origine
+    ('diffusion_model.double_blocks.0.img_attn.proj.lora_A.weight') -- la garde etait
+    donc inerte exactement la ou elle servait. On compte desormais TOUTES les matrices
+    et on ne garde que les valeurs declarees dans _FLUX2_VARIANTS: les dimensions
+    derivees (qkv en 3x, mlp en 4x) n'y figurent pas et s'ecartent d'elles-memes.
+
+    None des qu'il y a le moindre doute: ecarter une LoRA valide serait pire que le
+    message d'erreur qu'on cherche a remplacer."""
     try:
         hdr = _safetensors_header(path)
     except Exception:
@@ -832,15 +853,13 @@ def _flux2_lora_hidden_dim(path):
         shape = v.get("shape") or []
         if len(shape) != 2:
             continue
-        if k.endswith(_FLUX2_LORA_IN_SIGS):
-            d = int(shape[1])
-        elif k.endswith(_FLUX2_LORA_OUT_SIGS):
-            d = int(shape[0])
-        else:
+        side = _lora_side(k)
+        if side is None:
             continue
-        seen[d] = seen.get(d, 0) + 1
-    known = {d: n for d, n in seen.items() if d in _FLUX2_VARIANTS}
-    return max(known, key=known.get) if known else None
+        d = int(shape[1] if side == "A" else shape[0])
+        if d in _FLUX2_VARIANTS:
+            seen[d] = seen.get(d, 0) + 1
+    return max(seen, key=seen.get) if seen else None
 
 
 def _lora_variant_refusal(dim, base=None):
@@ -1020,6 +1039,31 @@ def _lora_unsupported(path):
     if algo and algo != "LoKr":
         return (f"LyCORIS {algo} - only LoKr is supported here; peft recognises none "
                 f"of its Hadamard factors and would apply nothing, silently")
+    # Quantifiee. Le loader dequant de cette app ne sert QUE le transformer
+    # (_safetensors_dequant n'est appele que depuis _load_transformer): une LoRA
+    # quantifiee partirait telle quelle dans load_lora_weights, ou ses tenseurs
+    # 'weight_scale' ne sont pas des cles LoRA connues -- donc ignores -- et ou ses
+    # poids fp8/int8 seraient castes en bf16 SANS leur echelle. Resultat: des valeurs
+    # plusieurs ordres de grandeur trop petites, soit une LoRA qui ne fait rien, sans
+    # le moindre message. Le meme piege que le FP4 et le LyCORIS, par la meme porte.
+    try:
+        hdr = _safetensors_header(path)
+        fp4 = sorted(f for f in _quant_metadata_formats(hdr) if "fp4" in f)
+        if fp4 or any(str(v.get("dtype", "")).upper().startswith("F4")
+                      for k, v in hdr.items()
+                      if k != "__metadata__" and isinstance(v, dict)):
+            return (f"{(fp4[0].upper() if fp4 else 'FP4')} (4-bit) LoRA - there is no "
+                    f"FP4 path here, for adapters or anything else. Take the bf16 "
+                    f"download of the same LoRA")
+    except Exception:
+        pass
+    dq = _safetensors_dequant(path)
+    if dq:
+        return (f"{dq} LoRA - this build dequantizes the TRANSFORMER only, never an "
+                f"adapter. peft would not recognise its scale tensors, would drop "
+                f"them, and would apply weights orders of magnitude too small - a "
+                f"LoRA that does nothing, silently. Take the bf16 download of the "
+                f"same LoRA")
     return None
 
 
@@ -1100,7 +1144,7 @@ def _safetensors_unsupported(path):
         # ce n'est pas un modele d'image, le dequantifier gaspillerait ~15 Go de cache et
         # le charger en transformer echouerait. Le pipe prend son encodeur du repo de base.
         if te_keys >= 4 and dit_keys == 0:
-            return ("text encoder (Qwen2.5-VL), not an image model - the pipeline takes its "
+            return ("text encoder (Qwen3), not an image model - the pipeline takes its "
                     "text encoder from the base repo; nothing to do with this file")
         # '*.qweight' = poids pre-quantifies (SVDQuant/Nunchaku, GPTQ-like). Signal net:
         # un checkpoint BF16/FP16 normal n'a jamais de 'qweight'.

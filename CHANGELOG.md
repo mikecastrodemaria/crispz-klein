@@ -7,6 +7,41 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.30.1 — The LoRA guard fired on one file out of seventy
+
+1.27.1 added a guard so a LoRA trained for the wrong variant would say so in one
+sentence instead of forty lines of `size mismatch`. Checking it against the real
+library — 72 files — showed it recognised **one** of them.
+
+It matched a fixed list of diffusers-layout suffixes
+(`attn.to_q.lora_A.weight`…). Almost every published klein LoRA is in the original
+FLUX layout instead — `diffusion_model.double_blocks.0.img_attn.proj.lora_A.weight` —
+and a third writes `lora_A.default.weight`, peft's adapter name wedged before
+`.weight`. The one file that matched happened to be the one that reported the bug,
+which is exactly how a guard gets believed without being tested.
+
+The matrices are now found **by segment**, not by suffix: any key carrying a `lora_A` /
+`lora_down` / `lora.down` segment gives its input width, `lora_B` / `lora_up` /
+`lora.up` its output width, and only widths declared in `_FLUX2_VARIANTS` count — so
+the derived widths (a fused qkv is 3x, an mlp 4x) discard themselves. **68 of 72 files
+now identified**, the remaining four being the two LoKr (no `lora_A`/`lora_B` at all,
+handled by the merge path) and two whose *names* are wrong, see below.
+
+**Quantized LoRAs are refused too.** `_safetensors_dequant` is called from
+`_load_transformer` and nowhere else: this build dequantizes the transformer, never an
+adapter. An fp8 or int8 LoRA therefore went straight to `load_lora_weights`, where its
+`weight_scale` tensors are not LoRA keys — so they were dropped, and the weights cast
+to bf16 *without their scale*: values orders of magnitude too small, a LoRA that does
+nothing, silently. The third instance of that exact failure this week, after NVFP4 and
+LyCORIS. Refused by name now, pointing at the bf16 download. FP4 adapters likewise.
+
+Also: the "text encoder, not an image model" refusal still said *Qwen2.5-VL*, inherited
+from the qwen-edit fork. On klein it is Qwen3.
+
+Regression tests in `tests/test_klein_variant.py` (the three dialects, and derived
+widths not fooling the detector) and `tests/test_lora_dialect.py` (fp8/int8 refused,
+bf16 untouched, variant still checked first).
+
 ## 1.30.0 — The text encoder computed eight blocks for nothing
 
 FLUX.2 does not read the LLM's output. It stacks the hidden states of three

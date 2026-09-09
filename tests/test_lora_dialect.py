@@ -164,12 +164,88 @@ def test_a_real_peft_lora_still_passes():
     print("OK test_a_real_peft_lora_still_passes")
 
 
+# ---------------------------------------------------------------------------
+# 4. LoRA QUANTIFIEE. Le loader dequant de cette app ne sert QUE le transformer:
+#    _safetensors_dequant n'est appele que depuis _load_transformer. Une LoRA fp8 ou
+#    int8 partait donc telle quelle dans load_lora_weights, ou ses tenseurs
+#    'weight_scale' ne sont pas des cles LoRA connues -- donc ignores -- et ou ses
+#    poids etaient castes en bf16 SANS leur echelle: des valeurs plusieurs ordres de
+#    grandeur trop petites, soit une LoRA qui ne fait rien, en silence. Meme piege que
+#    le FP4 et le LyCORIS, par la meme porte.
+# ---------------------------------------------------------------------------
+
+def _lora_file(name, dtype, scaled=True):
+    """Fausse LoRA FLUX.2 dans le dtype demande; `scaled` ajoute les facteurs."""
+    sd = {}
+    for i in range(4):
+        b = f"transformer.transformer_blocks.{i}.attn.to_q"
+        sd[b + ".lora_A.weight"] = torch.zeros(8, 4096, dtype=dtype)
+        sd[b + ".lora_B.weight"] = torch.zeros(4096, 8, dtype=dtype)
+        if scaled:
+            sd[b + ".lora_B.weight_scale"] = torch.ones(4096, 1)
+    p = os.path.join(TMP, name)
+    save_file(sd, p)
+    return p
+
+
+def _with_9B_base(fn):
+    old = P.BASE_REPO
+    P.BASE_REPO = "test-only/FLUX.2-klein-9B"
+    P._BASE_DIM_CACHE[P.BASE_REPO] = 4096
+    try:
+        return fn()
+    finally:
+        P.BASE_REPO = old
+
+
+def test_a_bf16_lora_still_passes():
+    """Le controle, d'abord: la garde ne doit rien casser de ce qui marchait."""
+    p = _lora_file("q_bf16.safetensors", torch.bfloat16, scaled=False)
+    assert _with_9B_base(lambda: P._lora_unsupported(p)) is None
+    print("OK test_a_bf16_lora_still_passes")
+
+
+def test_an_fp8_lora_is_refused_and_points_at_bf16():
+    p = _lora_file("q_fp8.safetensors", torch.float8_e4m3fn)
+    why = _with_9B_base(lambda: P._lora_unsupported(p))
+    assert why and "FP8" in why, why
+    assert "bf16" in why, why
+    print("OK test_an_fp8_lora_is_refused_and_points_at_bf16")
+
+
+def test_an_int8_lora_is_refused_too():
+    p = _lora_file("q_int8.safetensors", torch.int8)
+    why = _with_9B_base(lambda: P._lora_unsupported(p))
+    assert why and "INT8" in why, why
+    print("OK test_an_int8_lora_is_refused_too")
+
+
+def test_the_variant_check_still_comes_first():
+    """Une LoRA 4B ET fp8 doit s'entendre dire la VARIANTE: c'est le refus qui porte
+    l'instruction utile (changer de base), et le format n'y changerait rien."""
+    sd = {}
+    for i in range(4):
+        b = f"transformer.transformer_blocks.{i}.attn.to_q"
+        sd[b + ".lora_A.weight"] = torch.zeros(8, 3072, dtype=torch.float8_e4m3fn)
+        sd[b + ".lora_B.weight"] = torch.zeros(3072, 8, dtype=torch.float8_e4m3fn)
+        sd[b + ".lora_B.weight_scale"] = torch.ones(3072, 1)
+    p = os.path.join(TMP, "q_fp8_4B.safetensors")
+    save_file(sd, p)
+    why = _with_9B_base(lambda: P._lora_unsupported(p))
+    assert why and "4B" in why and "switch the base model" in why, why
+    print("OK test_the_variant_check_still_comes_first")
+
+
 if __name__ == "__main__":
     for fn in (test_detects_the_alternate_dialect, test_normalizes_a_mixed_file,
                test_edit_loras_sync_the_union_with_the_base_set,
                test_union_dedupes_on_path_first_weight_wins,
                test_a_lokr_is_routed_to_the_lora_folder,
                test_a_loha_is_named_as_such,
-               test_a_real_peft_lora_still_passes):
+               test_a_real_peft_lora_still_passes,
+               test_a_bf16_lora_still_passes,
+               test_an_fp8_lora_is_refused_and_points_at_bf16,
+               test_an_int8_lora_is_refused_too,
+               test_the_variant_check_still_comes_first):
         fn()
     print("All LoRA dialect / namespace tests passed.")

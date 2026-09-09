@@ -134,17 +134,29 @@ def test_file_without_signature_is_not_filtered():
 # qui faisait echouer toute l'edition sans jamais nommer la cause.
 # ---------------------------------------------------------------------------
 
-def _lora(name, dim, rank=128):
-    """Fausse LoRA FLUX.2: seules les formes comptent."""
+# Les trois dialectes RELEVES dans une bibliotheque reelle de 70 LoRA klein. La
+# premiere version de la garde ne connaissait que le premier -- et ne reconnaissait
+# donc qu'UN fichier sur 70. Les autres sont au layout FLUX d'origine, et l'un intercale
+# le nom d'adaptateur de peft ('default') entre la matrice et '.weight'.
+_LORA_LAYOUTS = {
+    "diffusers": ("transformer.transformer_blocks.0.attn.to_q.lora_{ab}.weight",
+                  "transformer.single_transformer_blocks.0.attn.to_out.lora_{ab}.weight"),
+    "flux-original": ("diffusion_model.double_blocks.0.img_attn.proj.lora_{ab}.weight",
+                      "diffusion_model.single_blocks.0.linear2.lora_{ab}.weight"),
+    "peft-adapter-name": ("single_transformer_blocks.0.attn.to_out.lora_{ab}.default.weight",
+                          "transformer_blocks.0.attn.to_q.lora_{ab}.default.weight"),
+}
+
+
+def _lora(name, dim, rank=128, layout="diffusers"):
+    """Fausse LoRA FLUX.2: seules les formes comptent. lora_A = [rang, entree],
+    lora_B = [sortie, rang]."""
+    sd = {}
+    for tmpl in _LORA_LAYOUTS[layout]:
+        sd[tmpl.format(ab="A")] = torch.zeros(rank, dim)
+        sd[tmpl.format(ab="B")] = torch.zeros(dim, rank)
     p = os.path.join(TMP, name)
-    save_file({
-        "transformer.transformer_blocks.0.attn.to_q.lora_A.weight": torch.zeros(rank, dim),
-        "transformer.transformer_blocks.0.attn.to_q.lora_B.weight": torch.zeros(dim, rank),
-        "transformer.single_transformer_blocks.0.attn.to_qkv_mlp_proj.lora_A.weight":
-            torch.zeros(rank, dim),
-        "transformer.single_transformer_blocks.0.attn.to_out.lora_B.weight":
-            torch.zeros(dim, rank),
-    }, p)
+    save_file(sd, p)
     return p
 
 
@@ -193,6 +205,34 @@ def test_a_lokr_has_no_lora_signature():
     print("OK test_a_lokr_has_no_lora_signature")
 
 
+def test_every_lora_dialect_is_recognised():
+    """Le bug qui rendait la garde inerte: elle ne lisait que le layout diffusers,
+    alors que la bibliotheque reelle est en layout FLUX d'origine. Reconnaitre la
+    matrice par SEGMENT ('lora_A' quelque part dans la cle) couvre les trois."""
+    for layout in _LORA_LAYOUTS:
+        for label, dim in DIMS.items():
+            p = _lora(f"dialect_{layout}_{label}.safetensors", dim, layout=layout)
+            got = P._flux2_lora_hidden_dim(p)
+            assert got == dim, (layout, label, got)
+    print("OK test_every_lora_dialect_is_recognised")
+
+
+def test_derived_widths_do_not_fool_the_detector():
+    """Un qkv fusionne est large de 3x, un mlp de 4x. Ces valeurs ne figurent pas dans
+    _FLUX2_VARIANTS et doivent donc etre ignorees, pas prises pour une dimension."""
+    p = os.path.join(TMP, "derived.safetensors")
+    save_file({
+        # seule cette paire porte la vraie dimension (4096)
+        "diffusion_model.double_blocks.0.img_attn.proj.lora_A.weight": torch.zeros(16, 4096),
+        "diffusion_model.double_blocks.0.img_attn.proj.lora_B.weight": torch.zeros(4096, 16),
+        # celles-ci portent 3x et 4x: a ignorer
+        "diffusion_model.double_blocks.0.img_attn.qkv.lora_B.weight": torch.zeros(12288, 16),
+        "diffusion_model.double_blocks.0.img_mlp.0.lora_B.weight": torch.zeros(16384, 16),
+    }, p)
+    assert P._flux2_lora_hidden_dim(p) == 4096, P._flux2_lora_hidden_dim(p)
+    print("OK test_derived_widths_do_not_fool_the_detector")
+
+
 if __name__ == "__main__":
     for fn in (test_hidden_dim_read_from_header, test_mismatch_is_refused_both_ways,
                test_summary_carries_the_instructions_once,
@@ -201,6 +241,8 @@ if __name__ == "__main__":
                test_a_lora_declares_its_variant_through_its_shapes,
                test_a_4B_lora_on_a_9B_base_is_refused_in_one_sentence,
                test_a_lora_without_a_signature_is_never_filtered,
-               test_a_lokr_has_no_lora_signature):
+               test_a_lokr_has_no_lora_signature,
+               test_every_lora_dialect_is_recognised,
+               test_derived_widths_do_not_fool_the_detector):
         fn()
     print("All 4B/9B variant tests passed.")
