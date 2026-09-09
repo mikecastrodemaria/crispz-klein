@@ -7,6 +7,39 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.31.0 — Metadata that describes the image, not the intention
+
+Three holes, all the same kind: an image that cannot be reproduced from its own file,
+or worse, one that claims something untrue.
+
+**Edit LoRAs were absent entirely.** The edit set is separate from the base set and it
+is what shapes an edit's result, yet the omni save path passed only
+`extra={"refs": n}`. An edit could not be reproduced from its own metadata. Recorded
+now as `edit_loras`, with `edit_speed` when the rapid mode is on — and **only on an
+edit**: `_APPLIED_EDIT_LORAS` outlives the edit that set it, so without a mode guard
+the next txt2img would claim a set it never carried. A wrong metadata field is worse
+than a missing one.
+
+**The list was the LoRAs requested, not the LoRAs applied.** `LORAS`, not
+`_APPLIED_LORAS`. That was survivable before; it is not now that a LoRA can be dropped
+mid-flight — wrong 4B/9B variant, unsupported LyCORIS, quantized build, missing file —
+all of which this week added. Signing an image with a LoRA it does not carry is exactly
+the silent lie these guards exist to prevent. What was actually applied is recorded,
+and anything requested but dropped goes to `loras_not_applied` rather than vanishing.
+
+A **LoKr** also disappeared: merged into the weights, it is in no PEFT adapter at all.
+`_APPLIED_LOKRS` is now folded into the same list.
+
+**The base repo was missing whenever a single file was selected.** A single file
+replaces the *transformer* only — VAE, text encoder and architecture config come from
+the repo, and 4B and 9B are not interchangeable. `model` alone was not enough to
+reproduce anything; `base_repo` sits beside it now.
+
+All of it reaches the A1111 `parameters` chunk too, the line Civitai and the A1111
+viewers actually read, where no LoRA had ever appeared.
+
+Regression tests in `tests/test_gen_meta.py`.
+
 ## 1.30.2 — The 9B is not slow, and has not been for a while
 
 The README said the bf16 9B costs **50 s** an image under offload, and sold a GGUF

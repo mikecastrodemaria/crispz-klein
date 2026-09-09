@@ -128,6 +128,17 @@ def _a1111_parameters(meta):
             parts.append(f"Size: {size}")
     if meta.get("model"):
         parts.append(f"Model: {os.path.basename(str(meta['model']))}")
+    # Les LoRA manquaient a cette ligne, alors que c'est celle que lisent Civitai et
+    # les visionneuses A1111: une image y arrivait sans rien dire de ce qui l'avait
+    # faconnee. Le jeu d'EDITION est nomme a part, il ne se confond pas avec le base.
+    for key, label in (("loras", "Loras"), ("edit_loras", "Edit loras")):
+        vals = meta.get(key)
+        if vals:
+            parts.append(f"{label}: {', '.join(str(v) for v in vals)}")
+    # Un single-file ne remplace que le transformer: sans son repo de base, l'image
+    # n'est pas reproductible (4B et 9B ne sont pas interchangeables).
+    if meta.get("base_repo"):
+        parts.append(f"Base: {meta['base_repo']}")
     if parts:
         out.append(", ".join(parts))
     return "\n".join(out)

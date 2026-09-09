@@ -3657,6 +3657,11 @@ def txt2img_run(prompt, width, height, gen_steps, seed, negative_prompt="",
     return result, timings
 
 
+# Modes ou le jeu de LoRA d'EDITION est reellement pose (branche omni de _ui_generate
+# et l'op 'edit' du protocole). Ailleurs il ne l'est pas, et le dire serait mentir.
+_EDIT_MODES = ("omni", "edit")
+
+
 def _gen_meta(mode, prompt, negative="", seed=None, steps=None, guidance=None,
               size=None, model=None, styles=None, extra=None):
     """Construit le dict de metadonnees de generation (pour sidecar/PNG)."""
@@ -3676,8 +3681,34 @@ def _gen_meta(mode, prompt, negative="", seed=None, steps=None, guidance=None,
         m["styles"] = _styles
     m["sampler"] = f"{SAMPLER}/{SCHEDULE}"
     m["model"] = model or (ZIMAGE_TRANSFORMER or BASE_REPO)
-    if LORAS:
-        m["loras"] = [f"{os.path.basename(p)}@{w}" for p, w in LORAS]
+    # Un single-file ne remplace que le TRANSFORMER: le VAE, l'encodeur texte et la
+    # config d'architecture viennent du repo de base, et 4B/9B ne sont pas
+    # interchangeables. Sans lui, l'image n'est pas reproductible.
+    if ZIMAGE_TRANSFORMER:
+        m["base_repo"] = BASE_REPO
+    # Ce qui a REELLEMENT ete pose, pas ce qui a ete demande. Une LoKr est fusionnee
+    # dans les poids (_APPLIED_LOKRS) et n'apparait pas dans les adaptateurs PEFT; et
+    # depuis que des LoRA peuvent etre ecartees en cours de route (mauvaise variante,
+    # LyCORIS non supporte, build quantifie, fichier absent), lister LORAS reviendrait
+    # a signer une image avec une LoRA qu'elle ne porte pas.
+    applied = list(_APPLIED_LORAS) + list(_APPLIED_LOKRS)
+    if applied:
+        m["loras"] = [f"{os.path.basename(p)}@{w}" for p, w in applied]
+    missing = [pw for pw in LORAS if pw not in applied]
+    if missing:
+        m["loras_not_applied"] = [f"{os.path.basename(p)}@{w}" for p, w in missing]
+    # Jeu d'EDITION: distinct du jeu de base, et c'est lui qui faconne le resultat
+    # d'une edition. Il etait absent des metadonnees, donc une edition ne se
+    # reproduisait pas depuis son propre fichier.
+    # ... et SEULEMENT sur une edition: _APPLIED_EDIT_LORAS survit a l'edition qui l'a
+    # pose, donc un txt2img suivant revendiquerait un jeu qu'il n'a pas porte. Une
+    # metadonnee fausse est pire qu'une metadonnee absente.
+    if mode in _EDIT_MODES:
+        if _APPLIED_EDIT_LORAS:
+            m["edit_loras"] = [f"{os.path.basename(p)}@{w}"
+                               for p, w in _APPLIED_EDIT_LORAS]
+        if EDIT_SPEED and EDIT_SPEED.get("name"):
+            m["edit_speed"] = EDIT_SPEED["name"]
     if extra:
         m.update(extra)
     return m
