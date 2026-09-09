@@ -2043,16 +2043,25 @@ JOB_QUEUE_ENABLED = bool(_JQ_CFG.get("enabled", True))
 
 # Indices dans _gen_inputs (a garder synchro avec la liste dans build_ui).
 _Q_HISTORY_IDX = 34   # l'historique de session est injecte LIVE au run, pas du snapshot
-_Q_IDX = {"prompt": 0, "use_input": 4, "width": 13, "height": 14,
+_Q_IDX = {"prompt": 0, "use_input": 4, "input_mode": 6, "width": 13, "height": 14,
           "gen_steps": 15, "image_number": 16, "seed": 17}
+# ref1..ref4 dans _gen_inputs. Sert a l'axe "Edit LoRA weight", qui n'a de sens que
+# sur un job d'edition -- et un job d'edition, c'est au moins une reference.
+_Q_REF_IDX = (7, 8, 9, 10)
 
 
 def _q_model_state():
     """Snapshot de l'etat modele GLOBAL (hors _gen_inputs): checkpoint/transformer,
-    LoRA actives, sampler/schedule. Rend chaque job autonome et reproductible."""
+    LoRA actives, sampler/schedule. Rend chaque job autonome et reproductible.
+
+    Le jeu d'EDITION en fait partie depuis qu'un axe le fait varier: sans lui, un job
+    d'edition rejoue par la file reprenait le jeu d'edition COURANT de l'UI au lieu
+    du sien -- reproductible en apparence seulement."""
     return {"base_repo": cz_pipeline.BASE_REPO,
             "transformer": cz_pipeline.ZIMAGE_TRANSFORMER,
             "loras": list(cz_pipeline.LORAS),
+            "edit_loras": list(cz_pipeline.EDIT_LORAS),
+            "edit_loras_enabled": bool(cz_pipeline.EDIT_LORAS_ENABLED),
             "sampler": cz_pipeline.SAMPLER,
             "schedule": cz_pipeline.SCHEDULE}
 
@@ -2064,6 +2073,11 @@ def _q_restore_model_state(ms):
         set_zimage_model(ms["base_repo"])
     set_zimage_transformer(ms.get("transformer") or "")
     set_loras([(p, w) for p, w in (ms.get("loras") or [])])
+    # Jeu d'edition: pose a chaud sur le meme transformer, aucun rechargement.
+    # 'edit_loras' absent = snapshot d'avant cet axe -> on ne touche a rien.
+    if "edit_loras" in ms:
+        cz_pipeline.set_edit_loras([(p, w) for p, w in (ms.get("edit_loras") or [])])
+        cz_pipeline.set_edit_loras_enabled(ms.get("edit_loras_enabled", True))
     set_sampler(ms.get("sampler") or "euler")
     set_schedule(ms.get("schedule") or "sgm_uniform")
 
@@ -2370,6 +2384,11 @@ _XYZ_AXES = {
     "Tile":         {"kind": "val", "idx": 27, "cast": int, "param": "tile"},
     "Refine tile":  {"kind": "val", "idx": 29, "cast": int, "param": "refine_tile"},
     "LoRA weight":  {"kind": "lora_weight"},
+    # Poids du jeu d'EDITION (pipe omni), distinct du jeu de base. Il n'a d'effet que
+    # sur un job d'EDITION: _ui_generate ne pose EDIT_LORAS que sur sa branche omni
+    # (use_input + mode "Reference (Omni)" + au moins une reference). L'axe le
+    # verifie et REFUSE plutot que de rendre N images identiques sans un mot.
+    "Edit LoRA weight": {"kind": "edit_lora_weight"},
     # Comparer plusieurs LoRA dans le slot 1 : epochs d'un meme entrainement,
     # versions CivitAI du meme modele. Le poids courant est conserve ; l'axe
     # "LoRA + weight" fait varier les deux ensemble ("ma_lora.safetensors:0.8").
@@ -2397,6 +2416,9 @@ _XYZ_CALIB = {
     "Tile": "384, 512, 768",
     "Refine tile": "0, 768, 1024",
     "LoRA weight": "0.4, 0.7, 1.0",
+    # Les poids negatifs inversent l'effet de la LoRA et sont dans les bornes par
+    # defaut (-2..2): un balayage centre sur 0 montre les deux sens et la reference.
+    "Edit LoRA weight": "-0.4, -0.2, 0, 0.2, 0.4",
 }
 
 
@@ -2479,11 +2501,27 @@ def _ui_xyz_fill(axis, current):
 
 def _xyz_parse_values(s):
     """Parse un champ de valeurs CSV; les guillemets protegent les virgules
-    (csv stdlib). Renvoie la liste des valeurs non vides."""
+    (csv stdlib). Renvoie la liste des valeurs non vides.
+
+    Les RETOURS A LA LIGNE sont des separateurs, au meme titre que la virgule. Coller
+    une liste sur plusieurs lignes est un geste normal, et `csv.reader([s])` y
+    repondait `_csv.Error: new-line character seen in unquoted field` -- une trace
+    Gradio en console, et rien du tout cote interface. Lire le champ comme un FICHIER
+    (StringIO, newline='') est exactement le "universal-newline mode" que reclamait ce
+    message: les lignes redeviennent des lignes, CRLF compris, et une valeur qui
+    contient VRAIMENT un retour a la ligne se quote -- comme une virgule.
+
+    Ne laisse jamais fuir une csv.Error: elle repart en ValueError lisible, que
+    _ui_xyz_build affiche dans son canal d'erreur au lieu de la deverser en trace."""
     if not (s or "").strip():
         return []
-    row = next(csv.reader([s], skipinitialspace=True))
-    return [v.strip() for v in row if v.strip()]
+    out = []
+    try:
+        for row in csv.reader(io.StringIO(s, newline=""), skipinitialspace=True):
+            out.extend(v.strip() for v in row)
+    except csv.Error as e:
+        raise ValueError(f"unreadable value list ({e})") from e
+    return [v for v in out if v]
 
 
 def _xyz_match(value, choices):
@@ -2527,6 +2565,30 @@ def _xyz_validate_axis(name, raw_values, base_vals, base_ms):
             return [float(v) for v in raw_values], None
         except ValueError as e:
             return None, f"LoRA weight: {e}"
+    if kind == "edit_lora_weight":
+        if not base_ms.get("edit_loras"):
+            return None, ("Edit LoRA weight: no active edit LoRA (pick one in "
+                          "Models > LoRA, section Edit LoRA)")
+        # Le jeu d'edition n'est pose que par la branche omni de _ui_generate. Sur un
+        # job txt2img/img2img il ne s'appliquerait jamais et la grille rendrait N
+        # images IDENTIQUES, sans erreur ni explication -- le pire resultat possible.
+        # On refuse ici, en disant quoi cocher.
+        if not (base_vals[_Q_IDX["use_input"]]
+                and str(base_vals[_Q_IDX["input_mode"]]) == "Reference (Omni)"
+                and any(base_vals[i] is not None for i in _Q_REF_IDX)):
+            return None, ("Edit LoRA weight only bites on an EDIT run, and this grid "
+                          "is not one: tick 'Use input image', set the mode to "
+                          "'Reference (Omni)', add at least one reference image, then "
+                          "rebuild. (On a txt2img grid the edit set is never applied "
+                          "-- every cell would come out identical.)")
+        if not base_ms.get("edit_loras_enabled", True):
+            return None, ("Edit LoRA weight: the 'Edit LoRAs' checkbox is OFF in "
+                          "Models > LoRA, so the set is remembered but never applied. "
+                          "Tick it, then rebuild.")
+        try:
+            return [float(v) for v in raw_values], None
+        except ValueError as e:
+            return None, f"Edit LoRA weight: {e}"
     if kind == "performance":
         out = []
         for v in raw_values:
@@ -2601,6 +2663,8 @@ def _xyz_apply(name, value, vals, ms):
             ms["transformer"] = resolve_checkpoint(value)
     elif kind == "lora_weight":
         ms["loras"] = [(p, float(value)) for p, _w in (ms.get("loras") or [])]
+    elif kind == "edit_lora_weight":
+        ms["edit_loras"] = [(p, float(value)) for p, _w in (ms.get("edit_loras") or [])]
     elif kind in ("lora_name", "lora_name_weight"):
         name, weight = value
         if weight is None:                       # axe "LoRA" : on garde le poids courant
@@ -2763,7 +2827,14 @@ def _ui_xyz_build(*args):
     base_ms = _q_model_state()
     axes = []
     for name, raw in axes_in:
-        values, err = _xyz_validate_axis(name, _xyz_parse_values(raw), list(gen_vals), base_ms)
+        # Le parse peut refuser une saisie (csv illisible): son message part dans le
+        # MEME canal que les erreurs de validation. Sans ce filet il repartait en
+        # trace Gradio, bruyante en console et muette pour l'utilisateur.
+        try:
+            parsed = _xyz_parse_values(raw)
+        except ValueError as e:
+            return (items, *_q_render(items), f"❌ {name}: {e}")
+        values, err = _xyz_validate_axis(name, parsed, list(gen_vals), base_ms)
         if err:
             return (items, *_q_render(items), f"❌ {err}")
         axes.append((name, values))

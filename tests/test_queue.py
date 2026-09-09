@@ -80,8 +80,38 @@ def test_render():
 
 
 def test_model_state_roundtrip_keys():
+    """Le jeu d'EDITION fait partie du snapshot depuis l'axe 'Edit LoRA weight'.
+    Sans lui, un job d'edition rejoue par la file reprenait le jeu d'edition COURANT
+    de l'interface au lieu du sien: reproductible en apparence seulement."""
     ms = cz_ui._q_model_state()
-    assert set(ms) == {"base_repo", "transformer", "loras", "sampler", "schedule"}
+    assert set(ms) == {"base_repo", "transformer", "loras", "edit_loras",
+                       "edit_loras_enabled", "sampler", "schedule"}
+
+
+def test_restore_tolerates_a_snapshot_without_the_edit_set():
+    """Une file persistee AVANT cet axe n'a pas de cle 'edit_loras'. La restaurer ne
+    doit toucher a rien, surtout pas vider le jeu d'edition courant."""
+    import cz_pipeline
+    seen = []
+    old_set, old_en = cz_pipeline.set_edit_loras, cz_pipeline.set_edit_loras_enabled
+    old_zm, old_zt = cz_ui.set_zimage_model, cz_ui.set_zimage_transformer
+    old_l, old_sa, old_sc = cz_ui.set_loras, cz_ui.set_sampler, cz_ui.set_schedule
+    cz_pipeline.set_edit_loras = lambda v: seen.append(v)
+    cz_pipeline.set_edit_loras_enabled = lambda v: seen.append(v)
+    cz_ui.set_zimage_model = cz_ui.set_zimage_transformer = lambda *_a: None
+    cz_ui.set_loras = cz_ui.set_sampler = cz_ui.set_schedule = lambda *_a: None
+    try:
+        cz_ui._q_restore_model_state({"base_repo": "", "transformer": None,
+                                      "loras": [], "sampler": "euler",
+                                      "schedule": "sgm_uniform"})
+        assert seen == [], seen                       # ancien snapshot -> on n'y touche pas
+        cz_ui._q_restore_model_state({"edit_loras": [("/x.safetensors", 0.6)],
+                                      "edit_loras_enabled": True})
+        assert seen == [[("/x.safetensors", 0.6)], True], seen
+    finally:
+        cz_pipeline.set_edit_loras, cz_pipeline.set_edit_loras_enabled = old_set, old_en
+        cz_ui.set_zimage_model, cz_ui.set_zimage_transformer = old_zm, old_zt
+        cz_ui.set_loras, cz_ui.set_sampler, cz_ui.set_schedule = old_l, old_sa, old_sc
 
 
 # ---------------------------------------------------- pause / stop semantics ---
@@ -166,6 +196,7 @@ def test_request_pause_sets_the_flag_and_reports():
 if __name__ == "__main__":
     for fn in (test_label, test_move, test_remove, test_render,
                test_model_state_roundtrip_keys,
+               test_restore_tolerates_a_snapshot_without_the_edit_set,
                test_pause_finishes_current_job_then_halts,
                test_stop_keeps_the_interrupted_job_queued,
                test_without_pause_or_stop_the_queue_drains,

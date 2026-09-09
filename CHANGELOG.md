@@ -7,6 +7,56 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.29.0 — An "Edit LoRA weight" axis, and a grid that survives a newline
+
+Two things reported together, both in the X/Y/Z grid.
+
+### The axis
+
+Edit LoRAs are a **separate set** from the base ones (`EDIT_LORAS`, posed only by
+`_ui_generate`'s omni branch), so no existing axis could reach them — and the job
+snapshot did not even carry them, which meant a queued edit job silently reused
+whatever the UI happened to hold at run time. Reproducible in appearance only.
+
+`Edit LoRA weight` now sweeps that set, and `_q_model_state()` captures
+`edit_loras` / `edit_loras_enabled` so each job is self-contained. A snapshot saved
+before this change has no `edit_loras` key and is left strictly alone — a persisted
+queue must not come back and wipe the current edit set.
+
+**The axis refuses more than it accepts, on purpose.** The edit set is applied *only*
+on an edit run, so on a txt2img grid it would change nothing and every cell would come
+out identical — no error, no explanation, the worst possible outcome. The axis checks
+that the job really is an edit (input image + *Reference (Omni)* + at least one
+reference) and says exactly what to tick otherwise. It also refuses when no edit LoRA
+is selected, and when the *Edit LoRAs* checkbox is off — the set is remembered then,
+but never applied.
+
+Default sweep is `-0.4, -0.2, 0, 0.2, 0.4`: negative weights invert a LoRA's effect and
+sit well inside the -2..2 bounds, and 0 gives the no-effect reference in the middle.
+
+### The newline
+
+Pasting a value list across several lines crashed the build with
+
+```
+_csv.Error: new-line character seen in unquoted field
+             - do you need to open the file in universal-newline mode?
+```
+
+`_xyz_parse_values` was calling `csv.reader([s])`, which cannot see a newline in an
+unquoted field. Reading the field as a **file** (`io.StringIO(s, newline="")`) is
+literally the universal-newline mode that message asks for: lines become lines, CRLF
+included, and a value that genuinely contains a newline is quoted — exactly like one
+containing a comma.
+
+The second half of the bug mattered more than the first: the failure reached the user
+as a Gradio traceback in the console and **nothing at all** in the interface, even
+though `_ui_xyz_build` already has an error channel. Any `csv.Error` now comes back as
+a readable message in that channel.
+
+Regression tests in `tests/test_xyz_edit_lora.py`; `tests/test_queue.py` covers the
+snapshot keys and the old-snapshot tolerance.
+
 ## 1.28.0 — A bench that separates loading from running
 
 `bench_models.bat` runs every model in the library through three images and reports
