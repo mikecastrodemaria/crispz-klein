@@ -394,6 +394,7 @@ def _cfg(negative=None, guidance=None):
 # recalcule a partir des embeddings, inutile de le garder.
 _EMBED_OUTS = ("prompt_embeds",)
 _CFG_IGNORED_SAID = set()   # valeurs de guidance deja signalees comme inertes
+_CFG_REAL_SAID = set()      # (checkpoint, guidance) deja annonces en vraie CFG
 _EMBED_CACHE = {}
 _EMBED_CACHE_MAX = max(0, int(CONFIG.get("prompt_embed_cache", 8) or 0))
 
@@ -463,6 +464,7 @@ def _qwen_call(pipe, **kw):
     # la verite du modele) pour taire le bruit. Si un jour un checkpoint FLUX.2 NON
     # distille est charge, is_distilled est faux et on transmet le curseur de l'UI,
     # qui redevient un vrai CFG.
+    need_cfg = False
     if "guidance_scale" not in kw:
         try:
             distilled = bool(getattr(pipe.config, "is_distilled", False))
@@ -477,10 +479,23 @@ def _qwen_call(pipe, **kw):
         # a monte la guidance ET charge un override, on la transmet: sur le repo de
         # base on sait que c'est inerte (mesure bit-a-bit), sur son checkpoint non.
         if distilled and want > 1.0 and ZIMAGE_TRANSFORMER:
-            _log(f"guidance {want:g} transmise: le transformer est un checkpoint "
-                 f"single-file ({os.path.basename(str(ZIMAGE_TRANSFORMER))}), le "
-                 f"drapeau 'distille' du repo de base ne le decrit pas. Un modele "
-                 f"distille l'ignorera; un modele 'undistilled' en a besoin.")
+            # Transmettre guidance_scale NE SUFFISAIT PAS. Le pipeline decide lui-meme:
+            #   do_classifier_free_guidance = guidance > 1 and not config.is_distilled
+            # et config.is_distilled est celui du REPO DE BASE (True pour klein). La
+            # passe sans prompt n'etait donc jamais faite. Le journal disait
+            # "transmise", diffusers repondait a la ligne suivante "ignored for
+            # step-wise distilled models" -- releve sur le banc du 2026-09-10, ou
+            # kleinForeskin a 28 steps coutait 0.6 s/step comme un distille au lieu du
+            # double. On leve le drapeau le temps de l'appel (cf. _run plus bas).
+            need_cfg = True
+            said = (str(ZIMAGE_TRANSFORMER), want)
+            if said not in _CFG_REAL_SAID:
+                _CFG_REAL_SAID.add(said)
+                _log(f"guidance {want:g} appliquee en VRAIE CFG sur "
+                     f"{os.path.basename(str(ZIMAGE_TRANSFORMER))}: deux passes par "
+                     f"step (avec et sans prompt), donc ~2x le temps de diffusion. "
+                     f"C'est le regime d'un checkpoint 'undistilled'. Sur un checkpoint "
+                     f"DISTILLE, une guidance > 1 degrade l'image: remets-la a 1.0.")
             kw["guidance_scale"] = want
         else:
             if distilled and want > 1.0 and want not in _CFG_IGNORED_SAID:
@@ -501,41 +516,66 @@ def _qwen_call(pipe, **kw):
         if _emb:
             kw.update(_emb)
             kw["prompt"] = None
+    # Vraie CFG: sans embeddings negatifs fournis, le pipeline encode LUI-MEME un
+    # negatif vide a chaque appel (il l'impose, pas de negative_prompt en entree) --
+    # sous offload, l'encodeur remonterait sur le GPU a chaque image et annulerait le
+    # cache. Meme cache que le positif, chaine vide pour clef.
+    if need_cfg and "negative_prompt_embeds" not in kw:
+        _neg = _cached_prompt_embeds(pipe, "", kw)
+        if _neg and "prompt_embeds" in _neg:
+            kw["negative_prompt_embeds"] = _neg["prompt_embeds"]
 
-    # Ventilation encode / diffusion / decode, en debug seul. Un total ("50s") ne dit
-    # pas quoi optimiser: sur un base offloade, deplacer l'encodeur Qwen3 puis le
-    # transformer coute un temps FIXE, que ni les steps ni la resolution ne reduisent.
-    # Savoir ou part le temps, c'est savoir si baisser les steps sert a quelque chose.
-    if cz_core.LOG_LEVEL >= 2 and "callback_on_step_end" not in kw:
-        marks = {"t0": time.time()}
+    def _run():
+        # Ventilation encode / diffusion / decode, en debug seul. Un total ("50s") ne dit
+        # pas quoi optimiser: sur un base offloade, deplacer l'encodeur Qwen3 puis le
+        # transformer coute un temps FIXE, que ni les steps ni la resolution ne reduisent.
+        # Savoir ou part le temps, c'est savoir si baisser les steps sert a quelque chose.
+        if cz_core.LOG_LEVEL >= 2 and "callback_on_step_end" not in kw:
+            marks = {"t0": time.time()}
 
-        def _mark(_pipe, i, _t, kwargs):
-            marks.setdefault("first_step", time.time())
-            marks["last_step"] = time.time()
-            return kwargs
-        kw["callback_on_step_end"] = _mark
+            def _mark(_pipe, i, _t, kwargs):
+                marks.setdefault("first_step", time.time())
+                marks["last_step"] = time.time()
+                return kwargs
+            kw["callback_on_step_end"] = _mark
+            try:
+                out = pipe(**kw)
+            except TypeError as e:
+                if "callback_on_step_end" not in str(e):
+                    raise
+                kw.pop("callback_on_step_end", None)   # pipeline sans callback -> tant pis
+                marks.clear()
+                out = pipe(**kw)
+            if marks.get("first_step"):
+                _dbg(f"phases: prompt+setup {marks['first_step'] - marks['t0']:.1f}s | "
+                     f"diffusion {marks['last_step'] - marks['first_step']:.1f}s | "
+                     f"decode {time.time() - marks['last_step']:.1f}s")
+            return out
         try:
-            out = pipe(**kw)
-        except TypeError as e:
-            if "callback_on_step_end" not in str(e):
-                raise
-            kw.pop("callback_on_step_end", None)   # pipeline sans callback -> tant pis
-            marks.clear()
-            out = pipe(**kw)
-        if marks.get("first_step"):
-            _dbg(f"phases: prompt+setup {marks['first_step'] - marks['t0']:.1f}s | "
-                 f"diffusion {marks['last_step'] - marks['first_step']:.1f}s | "
-                 f"decode {time.time() - marks['last_step']:.1f}s")
-        return out
-    try:
-        return pipe(**kw)
-    except TypeError as e:
-        if any(k in kw for k in ("true_cfg_scale", "negative_prompt")):
-            for k in ("true_cfg_scale", "negative_prompt"):
-                kw.pop(k, None)
-            _dbg(f"klein call: retry sans kwargs CFG ({e})")
             return pipe(**kw)
-        raise
+        except TypeError as e:
+            if any(k in kw for k in ("true_cfg_scale", "negative_prompt")):
+                for k in ("true_cfg_scale", "negative_prompt"):
+                    kw.pop(k, None)
+                _dbg(f"klein call: retry sans kwargs CFG ({e})")
+                return pipe(**kw)
+            raise
+
+    if not need_cfg:
+        return _run()
+    reg = getattr(pipe, "register_to_config", None)
+    if reg is None:
+        _log("vraie CFG impossible: ce pipeline n'expose pas register_to_config -- "
+             "diffusers ignorera la guidance")
+        return _run()
+    was = bool(getattr(pipe.config, "is_distilled", True))
+    reg(is_distilled=False)
+    try:
+        return _run()
+    finally:
+        # Le pipeline est partage (cache process-wide): un drapeau laisse leve ferait
+        # passer tous les appels suivants en CFG, y compris sur le repo de base.
+        reg(is_distilled=was)
 
 
 def _scheduler_accepts_sigmas(sched):

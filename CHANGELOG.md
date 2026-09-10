@@ -7,6 +7,47 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.33.0 — The Undistilled preset now does what it says
+
+The *Undistilled* Performance preset (28 steps, CFG 3.5) never applied its CFG.
+The pipeline decides on its own:
+
+```python
+do_classifier_free_guidance = guidance_scale > 1 and not self.config.is_distilled
+```
+
+and `config.is_distilled` belongs to the **base repo** -- `True` for klein 4B and 9B.
+A single file replaces only the transformer, so the pipeline still believed it was
+distilled and skipped the unconditional pass. The app logged "guidance 3.5 transmise",
+and diffusers answered on the very next line "Guidance scale 3.5 is ignored for
+step-wise distilled models". Found by the 2026-09-10 bench: `kleinForeskin` at 28 steps
+cost 0.6 s per step, exactly like a distilled model, where real CFG costs double.
+
+`_qwen_call` now lowers the flag for the duration of the call and **always restores
+it** in a `finally`: the pipeline is cached process-wide, and a flag left down would
+turn every later call into CFG, base repo included. The empty negative the pipeline
+imposes is cached like the positive prompt -- otherwise, under offload, the text
+encoder would climb back onto the GPU for every image and void the embed cache. The
+misleading "transmise" line is replaced by an accurate one, said once per
+checkpoint/value instead of once per image.
+
+**Proven on the GPU, not inferred.** Same model, same seed, guidance 1.0 vs 3.5: mean
+difference **34.86 / 255, 0.0 % identical pixels**, where the same run at 1.0 twice
+gives **0.00 / 255** -- deterministic, so the whole difference is the CFG. Before this
+change the two would have been bit-identical.
+
+**What it costs.** The diffusion phase doubles exactly: **3.5 s -> 7.1 s** at 8 steps
+on the 9B. A whole image rises less, since encoding, offload transfers and VAE decode do
+not double: about +3.5 s at 8 steps, about +12 s at 28 steps, so `kleinForeskin` goes
+from ~23 s to ~35 s per image. That is the normal price of an undistilled model.
+
+Who is affected: only a single-file override with guidance > 1. On this library that is
+the one undistilled checkpoint; every distilled model's profile is at 1.0. Raising
+guidance by hand on a distilled single file now really applies CFG -- and degrades the
+image, which the log says, where before the setting silently did nothing.
+
+Regression tests in `tests/test_real_cfg.py`.
+
 ## 1.32.2 — The bench report, read the way it has to be read
 
 Written after the first full run: 27 models, 24 measured, 3 refused.
