@@ -139,6 +139,9 @@ def _a1111_parameters(meta):
     # n'est pas reproductible (4B et 9B ne sont pas interchangeables).
     if meta.get("base_repo"):
         parts.append(f"Base: {meta['base_repo']}")
+    # Encodeur texte de remplacement: meme prompt, meme seed, autre encodeur = autre image.
+    if meta.get("text_encoder"):
+        parts.append(f"Text encoder: {meta['text_encoder']}")
     if parts:
         out.append(", ".join(parts))
     return "\n".join(out)

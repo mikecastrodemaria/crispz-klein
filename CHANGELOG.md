@@ -7,6 +7,41 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.34.0 — Swap the text encoder
+
+Models > Checkpoints gets a **Text encoder** picker. Default is the base repo's own
+Qwen3, as before. Otherwise a transformers folder (config.json + safetensors) or a
+Hugging Face repo id (`owner/repo`, or `owner/repo/subfolder` when the weights sit in a
+sub-folder), for instance an abliterated Qwen3 of the same size. Only the encoder
+changes: tokenizer, VAE and transformer still come from the base repo, and the encoder
+is trimmed like the stock one.
+
+A candidate is checked against the base repo's own encoder config **before** anything
+loads: same model type, same hidden size, same layer count. FLUX.2 reads three
+intermediate hidden states of the encoder into a `context_embedder` that is 3 x hidden
+wide, so a Qwen3-4B encoder (2560) cannot feed the 9B (4096); the refusal says which
+model the encoder belongs to. GGUF and single files are refused with the reason: there
+is no config.json, give the folder.
+
+Changing the encoder frees the pipeline (the encoder loads with it) and clears the
+prompt-embedding cache. The cache key now carries the encoder as well: `id(enc)` alone
+was not enough, since CPython reuses the id of a freed object. An encoder that turns out
+not to fit at load time (the base repo moved from 4B to 9B since it was picked, say) is
+set aside with a log line and the base encoder runs. The image says which: `text_encoder`
+in the metadata names the encoder that actually ran, by folder name and never by path;
+`text_encoder_not_applied` names one that was asked for and skipped. The A1111
+`parameters` line gains `Text encoder:`. The queue snapshot keeps the encoder, so a
+replayed job runs with its own.
+
+Config: `text_encoder`, `text_encoders_dir` (the list scans its sub-folders; default
+`text_encoders`, `text_encoder` or `clip` next to the checkpoints folder or its parent).
+Env `KLEIN_TEXT_ENCODER`.
+
+Checked on GPU: the stock encoder, loaded through this path from its own folder,
+renders the same image bit for bit (0/255 at 1024 x 1024, 4 steps, same seed), and
+the 9B encoder is refused on the 4B with the reason. Regression tests in
+`tests/test_text_encoder.py`.
+
 ## 1.33.1 — A VAE among the checkpoints is refused by name
 
 `diffusion_pytorch_model.safetensors` sat in the checkpoints folder, showed up in the
