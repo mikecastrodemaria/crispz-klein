@@ -7,6 +7,20 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.34.3 — Picking Default survives a restart; the queue test follows the snapshot
+
+Two follow-ups to 1.34.0, both found while porting it to crispz-studio.
+
+Choosing **Default** in the Text encoder picker saves an empty `text_encoder` in the
+preferences. At the next start the value was read as `prefs or config`, so the empty
+string counted as absent and a `text_encoder` set in config.txt came back. A key present
+in the preferences now wins even when empty (`_resolve_text_encoder`); the environment
+variable still wins over both.
+
+`tests/test_queue.py` pins the exact key set of the queue snapshot and had failed since
+1.34.0 added `text_encoder`. It now expects the key. The 1.34.0 run covered the new
+tests and their neighbours, not this file.
+
 ## 1.34.2 — The undistilled base gets the undistilled preset
 
 `flux-2-klein-base-4b-fp8` is BFL's undistilled FLUX.2 Klein 4B, made for 28 to 50 steps

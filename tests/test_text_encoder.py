@@ -218,6 +218,18 @@ def test_the_queue_keeps_the_encoder():
     print("OK test_the_queue_keeps_the_encoder")
 
 
+def test_default_picked_in_the_ui_survives_a_restart():
+    """Choisir "Default" ecrit "" dans les preferences: au redemarrage, une valeur de
+    config.txt ne doit pas revenir par-dessus. L'environnement gagne toujours."""
+    cfg = {"text_encoder": r"D:\enc\from-config"}
+    assert P._resolve_text_encoder({}, {}, cfg) == r"D:\enc\from-config"
+    assert P._resolve_text_encoder({}, {"text_encoder": ""}, cfg) == ""
+    assert P._resolve_text_encoder({}, {"text_encoder": r"D:\enc\ui"}, cfg) == r"D:\enc\ui"
+    assert P._resolve_text_encoder({"KLEIN_TEXT_ENCODER": r"D:\enc\env"},
+                                   {"text_encoder": ""}, cfg) == r"D:\enc\env"
+    print("OK test_default_picked_in_the_ui_survives_a_restart")
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

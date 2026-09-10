@@ -84,8 +84,9 @@ def test_model_state_roundtrip_keys():
     Sans lui, un job d'edition rejoue par la file reprenait le jeu d'edition COURANT
     de l'interface au lieu du sien: reproductible en apparence seulement."""
     ms = cz_ui._q_model_state()
+    # 'text_encoder' depuis la 1.34.0: un job rejoue par la file garde son encodeur.
     assert set(ms) == {"base_repo", "transformer", "loras", "edit_loras",
-                       "edit_loras_enabled", "sampler", "schedule"}
+                       "edit_loras_enabled", "sampler", "schedule", "text_encoder"}
 
 
 def test_restore_tolerates_a_snapshot_without_the_edit_set():

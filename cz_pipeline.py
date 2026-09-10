@@ -116,7 +116,21 @@ else:
 # "abliterated" de meme taille. Seul l'encodeur change: tokenizer, VAE et transformer
 # restent ceux du repo de base.
 CFG_TEXT_ENCODER_KEY = "text_encoder"
-TEXT_ENCODER = _cfg_first(CFG_TEXT_ENCODER_KEY, env=("KLEIN_TEXT_ENCODER",)) or ""
+
+
+def _resolve_text_encoder(env, prefs, config):
+    """Encodeur au demarrage: env > preferences > config. Une cle PRESENTE dans les
+    preferences gagne meme vide: c'est le choix "Default" fait dans l'UI, et une valeur
+    de config.txt ne doit pas le defaire au redemarrage (un "" passait pour absent)."""
+    v = str(env.get("KLEIN_TEXT_ENCODER") or "").strip()
+    if v:
+        return v
+    if CFG_TEXT_ENCODER_KEY in prefs:
+        return str(prefs.get(CFG_TEXT_ENCODER_KEY) or "").strip()
+    return str(config.get(CFG_TEXT_ENCODER_KEY) or "").strip()
+
+
+TEXT_ENCODER = _resolve_text_encoder(os.environ, _prefs, CONFIG)
 # Celui qui est REELLEMENT charge ('' = celui du repo de base). Distinct de TEXT_ENCODER:
 # un encodeur qui ne convient pas au repo courant est ecarte au chargement, et les
 # metadonnees disent ce qui a tourne, pas ce qui etait demande.
