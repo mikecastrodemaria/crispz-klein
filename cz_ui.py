@@ -690,6 +690,18 @@ def _profile_for_checkpoint(path):
             return st, g, (f" Its CivitAI page calls it **undistilled**, so the "
                            f"distilled profile (4 steps, no CFG) would render mush: "
                            f"applied _{preset}_ instead.")
+    # 2b. Le NOM DE FICHIER de la sortie officielle non distillee: BFL la publie en
+    #     'flux-2-klein-base-4b' / 'FLUX.2-klein-base-9B'. Fichier officiel = pas de page
+    #     CivitAI, donc pas de sidecar: profile_for_model y voyait "klein" -> 4 steps sans
+    #     CFG, et l'image s'arretait en route (banc du 2026-09-10: nettete 572 sur la
+    #     scene, contre 971 pour la base distillee au meme reglage).
+    import re
+    if re.search(r"klein[-_. ]?base|base[-_. ]?(?:4|9)b", base.lower()):
+        preset, st, g = _undistilled_profile()
+        if preset:
+            return st, g, (f" The file name says **klein-base**: the undistilled release, "
+                           f"which the distilled profile (4 steps, no CFG) leaves "
+                           f"unfinished: applied _{preset}_ instead.")
     # 3. Rien de connu: le profil par nom de fichier, comme avant.
     st, g = profile_for_model(base)
     return st, g, ""

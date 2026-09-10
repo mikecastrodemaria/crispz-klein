@@ -7,6 +7,18 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.34.2 — The undistilled base gets the undistilled preset
+
+`flux-2-klein-base-4b-fp8` is BFL's undistilled FLUX.2 Klein 4B, made for 28 to 50 steps
+with real CFG. An official file has no CivitAI page, hence no sidecar, so the profile
+fell through to the file-name match: "klein", 4 steps, no guidance. The image stopped
+halfway (bench of 2026-09-10: sharpness 572 on the street scene, 971 for the distilled
+base at the same setting), in the bench and in the app alike.
+
+A file name that reads `klein-base` / `base-4b` / `base-9b` now gets the Undistilled
+Performance preset, after the CivitAI consensus and the CivitAI "undistilled" name, and
+before the file-name profile. Regression test in `tests/test_undistilled_profile.py`.
+
 ## 1.34.1 — FP8 weights stored at scale, read as such
 
 `kleinFinalcutFP16FP8_comfyQuant` rendered coloured noise for every prompt, while its
