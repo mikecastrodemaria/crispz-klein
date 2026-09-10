@@ -160,6 +160,18 @@ def _plan():
                 why = P._safetensors_unsupported(p)
                 if why and why == P._flux2_variant_mismatch(P._flux2_hidden_dim(p)):
                     why = None
+            elif f.lower().endswith(".gguf"):
+                # Meme regle pour le GGUF. La premiere version ne verifiait le layout
+                # que des .safetensors: deux GGUF convertis par stable-diffusion.cpp
+                # ont ete TENTES, puis refuses au chargement par la garde de l'app. On
+                # le dit des le plan, comme pour tout autre fichier que l'app refuse.
+                why = P._gguf_layout_unsupported(p) or None
+                # ... mais comme pour les .safetensors, le refus de VARIANTE ne compte
+                # pas: le banc bascule la base par groupe. Sans cette ligne, une base
+                # en 4B ecartait les trois GGUF 9B du plan -- verifie, 22 modeles au
+                # lieu de 25.
+                if why and why == P._flux2_variant_mismatch(P._gguf_hidden_dim(p)):
+                    why = None
             items.append((f, p, var, why))
     if ONLY:
         items = [it for it in items if any(s in it[0].lower() for s in ONLY)]
@@ -237,6 +249,12 @@ def _write_report(rows):
         "  vide. Cout paye une fois, a ne pas confondre avec le regime.",
         "- **Regime**: moyenne des images suivantes. Le seul chiffre comparable.",
         "- **Modeles nus**: aucune LoRA ni LoKr, quelle que soit la config du moment.",
+        "- **Jusqu'a la 1re image** = chargement + 1re image. A LIRE EN PREMIER: sous",
+        "  offload les poids restent mappes sur le disque et la lecture glisse du",
+        "  chargement dans la 1re image (mesure: 4 s + 173 s pour un 9B bf16 sur disque",
+        "  USB). Chacune de ces deux colonnes, seule, trompe; leur somme non.",
+        "- **s/step** = regime / steps. Surestime le cout d'un step sous offload: une",
+        "  part fixe par image (~6,5 s sur le 9B, transferts + VAE) y est repartie.",
         "",
         "- **Cache**: etat du cache de dequantification AVANT le test. `froid` = le",
         "  chargement inclut la conversion FP8/INT8 vers bf16 (minutes). Une colonne",
@@ -249,8 +267,8 @@ def _write_report(rows):
         "> les suivants ne paient pas. Lire cette colonne comme un ordre de grandeur,",
         "> pas au dixieme de seconde -- `1re image` et `regime`, eux, sont fiables.",
         "",
-        "| Modele | Var. | Steps (source) | Cache | Chargement | 1re image | Regime | s/step | VRAM max |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| Modele | Var. | Steps (source) | Cache | Chargement | 1re image | Jusqu'a la 1re | Regime | s/step | VRAM max |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in ok:
         warm = r.get("warm_s")
@@ -259,6 +277,7 @@ def _write_report(rows):
             f"| `{r['name']}` | {r.get('variant') or '?'} | {r['steps']} "
             f"({r['profile_source']}) | {r.get('dequant_cache', '-')} | "
             f"{r['load_s']:.1f} s | {r['first_s']:.1f} s | "
+            f"**{r['load_s'] + r['first_s']:.0f} s** | "
             + (f"{warm:.1f} s" if warm else "-")
             + f" | {per} | {r.get('vram_peak_gb', 0):.1f} Go |")
     bad = [r for r in rows if r.get("error")]

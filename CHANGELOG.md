@@ -7,6 +7,30 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.32.2 — The bench report, read the way it has to be read
+
+Written after the first full run: 27 models, 24 measured, 3 refused.
+
+**A "time to first image" column, to be read first.** Under CPU offload the weights stay
+memory-mapped on disk, so the read slides out of *loading* and into the *first image*:
+a 9B bf16 on a USB hard drive measured **4 s + 173 s**, while a 4B, which fits in VRAM
+and moves to the GPU in one go, pays its read in loading (66-72 s). Either column alone
+misleads; their sum does not. The report now carries it, with a note on why.
+
+**`s/step` is qualified.** Regime divided by steps spreads a fixed per-image cost over
+the steps -- about 6.5 s on the 9B when every image has a fresh prompt (offload moves,
+VAE decode). The run fits ~6.5 s + ~0.6 s/step, which a two-point fit had put at
+4 s + 1.2 s/step until the 28-step model disproved it.
+
+**GGUFs the app refuses are refused in the plan.** Only `.safetensors` had their layout
+checked, so two GGUFs converted by stable-diffusion.cpp were *attempted*, then refused
+at load by the app's own guard. Harmless, since the refusal lands before any GPU work,
+but a plan has to say what will happen. Verification caught a regression before
+commit: the new GGUF check carried the 4B/9B variant refusal with it, and with the base
+on 4B it dropped the three 9B GGUFs from the plan (22 models instead of 25). The
+variant reason is neutralised for GGUFs exactly as it is for `.safetensors`, since the
+bench switches base per group.
+
 ## 1.32.1 — Two tools that measured the wrong thing
 
 **The pre-cache sized an all-in-one bundle by its whole file.** `bf16_gb()` counted
