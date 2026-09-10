@@ -892,12 +892,14 @@ def _text_encoder_source(src):
     except Exception:
         return None
     for sub in ([sub0] if sub0 else [None, "text_encoder"]):
-        try:
-            p = hf_hub_download(repo, f"{sub}/config.json" if sub else "config.json")
-            with open(p, encoding="utf-8") as f:
-                return json.load(f), repo, sub
-        except Exception:
-            continue
+        rel = f"{sub}/config.json" if sub else "config.json"
+        for local in (True, False):          # le cache d'abord: marche hors ligne
+            try:
+                p = hf_hub_download(repo, rel, local_files_only=local)
+                with open(p, encoding="utf-8") as f:
+                    return json.load(f), repo, sub
+            except Exception:
+                continue
     return None
 
 
@@ -1003,6 +1005,91 @@ def list_text_encoders():
                 out.append(p)
     return out
 
+
+
+def _hf_cache_dir():
+    """Dossier du cache Hugging Face (suit HF_HUB_CACHE / HF_HOME), ou None."""
+    try:
+        from huggingface_hub import constants
+        return constants.HF_HUB_CACHE
+    except Exception:
+        return None
+
+
+def list_cached_text_encoders(base=None):
+    """Encodeurs COMPATIBLES deja telecharges dans le cache Hugging Face, en (nom, id HF).
+
+    Un encodeur telecharge depuis Hugging Face vit dans ce cache, pas dans un dossier
+    text_encoders: sans ce balayage la liste de l'onglet Models ne montrait que "Default"
+    (releve le 2026-09-10 avec les encodeurs huihui et ponpoke telecharges). Proposes:
+    les depots qui ne sont PAS des pipelines diffusers (pas de model_index.json), dont une
+    config -- a la racine ou dans un sous-dossier -- colle a l'encodeur du repo de base
+    (famille, largeur, couches), et dont les poids sont la. La valeur est l'id HF: c'est
+    lui qui finit dans les metadonnees, lisible, au lieu de l'empreinte du snapshot."""
+    ref_cfg = _base_text_encoder_config(base)
+    if not ref_cfg:
+        return []
+    ref = _enc_dims(ref_cfg)
+    return [(hid, hid) for hid, cfg in _scan_cached_encoders() if _enc_dims(cfg) == ref]
+
+
+def cached_text_encoder_mismatches(base=None):
+    """Encodeurs du cache HF de la MEME famille mais d'une autre taille que celui du repo de
+    base -- ex. un Qwen3-4B quand klein 9B est charge. Masques de la liste (ils seraient
+    refuses), ils sont nommes a cote: sinon on croit que le telechargement n'a pas marche.
+    ([(id HF, largeur)], largeur attendue)."""
+    ref_cfg = _base_text_encoder_config(base)
+    if not ref_cfg:
+        return [], None
+    rh, rn, rt = _enc_dims(ref_cfg)
+    out = []
+    for hid, cfg in _scan_cached_encoders():
+        h, n, t = _enc_dims(cfg)
+        if t == rt and (h, n) != (rh, rn):
+            out.append((hid, h))
+    return out, rh
+
+
+def _scan_cached_encoders():
+    """[(id HF, config)] du cache Hugging Face: depots qui ne sont PAS des pipelines
+    diffusers, dont une config -- a la racine ou dans un sous-dossier -- a ses poids a cote
+    (revision la plus recente)."""
+    root = _hf_cache_dir()
+    if not root or not os.path.isdir(root):
+        return []
+    out = []
+    for d in sorted(os.listdir(root)):
+        if not d.startswith("models--"):
+            continue
+        repo = d[len("models--"):].replace("--", "/", 1)
+        snaps = os.path.join(root, d, "snapshots")
+        try:
+            revs = sorted(os.listdir(snaps),
+                          key=lambda r: os.path.getmtime(os.path.join(snaps, r)), reverse=True)
+        except OSError:
+            continue
+        if not revs:
+            continue
+        snap = os.path.join(snaps, revs[0])         # la revision la plus recente
+        if os.path.isfile(os.path.join(snap, "model_index.json")):
+            continue                                 # un pipeline diffusers, pas un encodeur
+        try:
+            subs = [""] + sorted(s for s in os.listdir(snap) if os.path.isdir(os.path.join(snap, s)))
+        except OSError:
+            continue
+        for s in subs:
+            p = os.path.join(snap, s) if s else snap
+            try:
+                with open(os.path.join(p, "config.json"), encoding="utf-8") as f:
+                    cfg = json.load(f)
+                if not isinstance(cfg, dict):
+                    continue
+                if not any(fn.endswith(".safetensors") for fn in os.listdir(p)):
+                    continue                         # config seule, poids pas telecharges
+            except Exception:
+                continue
+            out.append((f"{repo}/{s}" if s else repo, cfg))
+    return out
 
 def set_text_encoder(src):
     """Choisit l'encodeur texte ('' = celui du repo de base). Un changement LIBERE le

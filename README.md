@@ -719,6 +719,69 @@ CLI equivalent: `--klein-transformer <repo-or-folder>`.
 "loras_dir": "C:\\path\\to\\models\\Lora"
 ```
 
+### Text encoder (swap)
+
+**Models → Checkpoints → Text encoder** replaces the base repo's own Qwen3 text encoder,
+for instance with an *abliterated* Qwen3 of the same size. Only the encoder changes: the
+tokenizer, the VAE and the transformer stay the base repo's, and the encoder is trimmed
+like the stock one.
+
+**Which encoder fits.** It must have the shape of the base repo's own encoder:
+
+| Base (and its checkpoints) | Encoder it takes |
+|---|---|
+| FLUX.2-klein-4B | a Qwen3-4B: `qwen3`, hidden size 2560, 36 layers |
+| FLUX.2-klein-9B | a Qwen3-8B: `qwen3`, hidden size 4096, 36 layers |
+
+Anything else is refused **before it loads**, with the reason — e.g. *hidden size 2560,
+and FLUX.2-klein-9B's encoder is 4096 wide … this is an encoder for FLUX.2-klein-4B*.
+GGUF files (made for ComfyUI / llama.cpp) and single `.safetensors` files are refused
+too: the app needs the transformers **folder** (`config.json` + weights). The 4B ships
+the public `Qwen/Qwen3-4B`, bit for bit the encoder Z-Image uses, so abliterations of
+Qwen3-4B fit it.
+
+**Downloading one.** An encoder from Hugging Face goes into the HF cache
+(`%USERPROFILE%\.cache\huggingface\hub`), where the picker finds it. From the app folder,
+with its venv (`import cz_core` makes the download use the app's own Hugging Face token):
+
+```bat
+.venv\Scripts\python -c "import cz_core; from huggingface_hub import snapshot_download; print(snapshot_download('huihui-ai/Huihui-Qwen3-4B-abliterated-v2'))"
+```
+
+When the encoder sits in a **sub-folder** of its repo, next to GGUF files you do not need,
+fetch that folder only:
+
+```bat
+.venv\Scripts\python -c "import cz_core; from huggingface_hub import snapshot_download; print(snapshot_download('ponpoke/flux2-klein-4b-uncensored-text-encoder', allow_patterns=['flux2-klein-4b-uncensored-text-encoder/*']))"
+```
+
+A **gated** repo answers `403 … not in the authorized list` until you accept its terms on
+its Hugging Face page, **with the account of the token the app uses** (`hf_token` in
+`config.txt` / `preferences.json`, or `HF_TOKEN`): accepting with another account changes
+nothing. A local folder works too: put it under `text_encoders\<name>\` next to your
+checkpoints folder or its parent, or point `text_encoders_dir` at your own folder.
+
+**Picking it.** The list offers *Default (base repo's own)*, the folders found, and the
+encoders of the HF cache that fit the current base, marked *(HF cache)*. Pick one, or paste
+a folder path or a Hugging Face id (`owner/repo`, or `owner/repo/subfolder`) and press
+Enter. The status line confirms, and the model reloads on the next run with the prompt
+cache cleared. Encoders of the cache that do **not** fit the current base are named under
+the list with the reason (typically Qwen3-4B encoders while the 9B is selected: switch
+to the 4B to use them). The list follows a model change; **Refresh encoders** rescans
+after a download.
+
+**What is recorded.** An image made with a replacement encoder carries `text_encoder` in
+its metadata (folder name or Hugging Face id, never a local path) and `Text encoder:` in
+its A1111 parameters; an encoder asked for but set aside at load time is recorded as
+`text_encoder_not_applied`. The queue keeps each job's encoder, and *Default* survives a
+restart. Config: `text_encoder`, `text_encoders_dir`; env `KLEIN_TEXT_ENCODER`.
+
+> Measured on the 4B (4 steps, seed 12345, the three bench prompts), similarity to the
+> stock encoder's image on portrait / scene / chalkboard: `huihui-ai/Huihui-Qwen3-4B-abliterated-v2`
+> 0.94 / 0.75 / 0.85, chalkboard spelt right; `ponpoke/flux2-klein-4b-uncensored-text-encoder`
+> 0.87 / 0.61 / 0.41, two misspelt words. One seed: an indication, not a ranking. An
+> encoder cannot teach the transformer a concept it never learnt.
+
 ### LoRA (up to 3, combinable)
 
 **Models → LoRA**: set the folder → **Refresh** → pick **up to 3 LoRAs**, each with

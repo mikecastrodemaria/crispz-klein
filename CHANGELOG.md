@@ -7,6 +7,21 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.35.1 — The text-encoder list shows the Hugging Face cache
+
+An encoder downloaded from Hugging Face lives in the HF cache, and the Text encoder list
+only scanned `text_encoders` folders: it showed nothing but *Default* (seen on 2026-09-10
+with the ponpoke and huihui Qwen3-4B encoders just downloaded). It now also offers the
+encoders of the HF cache that fit the current base (same family, width and layer count),
+marked *(HF cache)*, with their Hugging Face id as the value: readable in the image
+metadata. Diffusers pipelines, configs without weights and other sizes are left out.
+Encoders of the same family but another size are **named under the list** with the
+reason: a Qwen3-4B encoder stays hidden while the base is FLUX.2-klein-9B, which takes a
+Qwen3-8B. The list follows a model change, and an id is looked up in the cache first, so
+it also works offline. The README now explains how to download an encoder (a gated repo
+must be accepted with the account of the app's token) and how to pick it in the UI.
+Regression test in `tests/test_text_encoder.py`.
+
 ## 1.35.0 — The boot check offers the GitHub update
 
 `boot_check.bat` (and its `_lan` / `_web` wrappers) now looks for new commits on

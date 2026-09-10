@@ -230,6 +230,55 @@ def test_default_picked_in_the_ui_survives_a_restart():
     print("OK test_default_picked_in_the_ui_survives_a_restart")
 
 
+def test_compatible_encoders_in_the_hf_cache_are_listed():
+    """Un encodeur telecharge depuis HF vit dans le cache HF: la liste doit le montrer.
+    Pas un pipeline diffusers, pas une autre largeur, pas une config sans poids."""
+    root = tempfile.mkdtemp(prefix="hfcache_")
+
+    def snap(repo, sub=None, cfg=QWEN4B, weights=True, pipeline=False):
+        d = os.path.join(root, "models--" + repo.replace("/", "--"), "snapshots", "r1")
+        p = os.path.join(d, sub) if sub else d
+        os.makedirs(p, exist_ok=True)
+        with open(os.path.join(p, "config.json"), "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
+        if weights:
+            open(os.path.join(p, "model.safetensors"), "wb").close()
+        if pipeline:
+            with open(os.path.join(d, "model_index.json"), "w", encoding="utf-8") as f:
+                f.write("{}")
+
+    snap("huihui-ai/Huihui-Qwen3-4B-abliterated-v2")
+    snap("ponpoke/flux2-klein-4b-uncensored-text-encoder", sub="flux2-klein-4b-uncensored-text-encoder")
+    snap("Qwen/Qwen3-8B", cfg=QWEN8B)                                    # autre largeur
+    snap("Tongyi-MAI/Z-Image-Turbo", sub="text_encoder", pipeline=True)  # pipeline diffusers
+    snap("someone/config-only", weights=False)                           # poids absents
+    old = (P._hf_cache_dir, P._base_text_encoder_config)
+    try:
+        P._hf_cache_dir = lambda: root
+        P._base_text_encoder_config = lambda base=None: QWEN4B
+        got = [v for _lab, v in P.list_cached_text_encoders()]
+    finally:
+        P._hf_cache_dir, P._base_text_encoder_config = old
+    assert got == ["huihui-ai/Huihui-Qwen3-4B-abliterated-v2",
+                   "ponpoke/flux2-klein-4b-uncensored-text-encoder/"
+                   "flux2-klein-4b-uncensored-text-encoder"], got
+    # avec un repo de base 9B: les deux Qwen3-4B quittent la liste et sont NOMMES a cote
+    old = (P._hf_cache_dir, P._base_text_encoder_config)
+    try:
+        P._hf_cache_dir = lambda: root
+        P._base_text_encoder_config = lambda base=None: QWEN8B
+        # le Qwen3-8B du faux cache convient au 9B: c'est lui, et lui seul, qui est propose
+        assert [v for _l, v in P.list_cached_text_encoders()] == ["Qwen/Qwen3-8B"]
+        other, width = P.cached_text_encoder_mismatches()
+        import cz_ui as U
+        hint = U._te_hint()
+    finally:
+        P._hf_cache_dir, P._base_text_encoder_config = old
+    assert width == 4096 and sorted(h for h, _w in other) == sorted(got), other
+    assert "2560" in hint and "4096" in hint and "huihui" in hint, hint
+    print("OK test_compatible_encoders_in_the_hf_cache_are_listed")
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
