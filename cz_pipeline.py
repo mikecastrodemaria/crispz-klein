@@ -1537,9 +1537,14 @@ def _dequant_cache_dir():
         return None
 
 
-def _dequant_cache_path(src):
+def _dequant_cache_path(src, legacy=False):
     """Chemin du bf16 cache pour un checkpoint source. La cle inclut taille+mtime:
-    un fichier remplace (meme nom) ne reutilise jamais l'ancien cache."""
+    un fichier remplace (meme nom) ne reutilise jamais l'ancien cache.
+
+    Un fichier stocke deja a l'echelle (_source_prescaled) change de cle: son ancien
+    cache a ete ecrit par le chargeur qui appliquait l'echelle a tort, il contient des
+    poids faux. Les autres fichiers gardent leur cle -- et leur cache, qui coute des
+    minutes par modele a reconstruire. legacy=True rend l'ancienne cle."""
     d = _dequant_cache_dir()
     if not d:
         return None
@@ -1547,8 +1552,11 @@ def _dequant_cache_path(src):
         p, size, mtime = _file_key(src)
     except OSError:
         return None
+    tag = "bf16-v2"
+    if not legacy and _source_prescaled(src):
+        tag = "bf16-v2-prescaled"
     h = _dqhash.sha1(
-        f"{p.lower()}|{size}|{mtime}|bf16-v2".encode("utf-8")).hexdigest()[:16]
+        f"{p.lower()}|{size}|{mtime}|{tag}".encode("utf-8")).hexdigest()[:16]
     base = os.path.splitext(os.path.basename(src))[0][:48]
     return os.path.join(d, f"{base}.{h}.safetensors")
 
@@ -1603,6 +1611,18 @@ def _dequant_cache_store(src, sd):
         gb = os.path.getsize(dst) / 1024**3
         _log(f"dequant cache: saved {gb:.1f} GB in {time.time() - t0:.1f}s "
              f"-> next load of this checkpoint skips the dequant")
+        # L'ancien cache de CE fichier, s'il a ete ecrit sous l'ancienne cle (poids
+        # faux, cf. _dequant_cache_path): remplace, donc supprime -- sinon il dort
+        # sur le disque jusqu'a ce que le plafond du cache le chasse.
+        old = _dequant_cache_path(src, legacy=True)
+        if old and os.path.abspath(old) != os.path.abspath(dst) and os.path.isfile(old):
+            try:
+                ogb = os.path.getsize(old) / 1024**3
+                os.remove(old)
+                _log(f"dequant cache: removed the stale {os.path.basename(old)} "
+                     f"({ogb:.1f} GB, written by the loader that applied the scale twice)")
+            except OSError as e:
+                _dbg(f"stale dequant cache not removed {old}: {e}")
         _dequant_cache_prune(keep=dst)
     except Exception as e:
         _log(f"dequant cache: not saved ({e})")
@@ -1638,6 +1658,87 @@ def _safetensors_comfy_prefixed(path):
                    for k in _safetensors_header(path) if k != "__metadata__")
     except Exception:
         return False
+
+
+# Plage de chaque format entier/flottant 8 bits: la valeur stockee la plus grande qu'un
+# poids QUANTIFIE (poids / echelle) peut atteindre.
+_QUANT_RANGE = {torch.float8_e4m3fn: 448.0, torch.float8_e5m2: 57344.0, torch.int8: 127.0}
+
+
+def _stored_at_scale(t, s, qdtype, cfg=None):
+    """Vrai si les poids stockes sont DEJA a leur echelle reelle, un weight_scale etant
+    fourni en plus -- a ne pas appliquer.
+
+    Un FP8 'scaled' normal stocke poids / echelle: sa plus grande valeur touche la plage
+    du format (448 en E4M3), et l'echelle vaut amax / 448. Le rapport
+    max|stocke| / (echelle x plage) vaut donc 1 / echelle, soit de 71 a 1 691 sur les 16
+    fichiers FP8/INT8 de la bibliotheque. kleinFinalcutFP16FP8_comfyQuant stocke les
+    poids TELS QUELS et fournit quand meme amax / 448: rapport 1,03. Appliquer cette
+    echelle rendait chaque poids 1 200 a 1 700 fois trop petit, le transformer ne
+    produisait plus rien et l'image sortait en bruit, pour tout prompt.
+    Les echelles MX (uint8 = exposant E8M0) ont un autre sens: jamais concernees."""
+    rng = _QUANT_RANGE.get(qdtype)
+    fmt = str((cfg or {}).get("format", "")).lower()
+    if rng is None or s.dtype == torch.uint8 or fmt.startswith("mx"):
+        return False
+    smax = float(s.detach().float().abs().max())
+    if smax <= 0.0:
+        return False
+    amax = float(t.detach().float().abs().max())
+    # 1. Un fichier 'scaled' normal REMPLIT la plage du format (poids / echelle touche
+    #    448 ou 127); un fichier deja a l'echelle la laisse quasi vide (0,375 sur 448
+    #    pour comfyQuant). Sans cette condition, un INT8 plein (+-127) dont l'echelle
+    #    avoisine 1 passait pour 'deja a l'echelle' (vu sur test_int8_per_row_scale).
+    if amax >= rng / 4:
+        return False
+    # 2. ... ET l'echelle decrit exactement les valeurs stockees: rapport ~1. Tres en
+    #    dessous (echelle arbitraire), ce n'est pas ce cas-la.
+    ratio = amax / (smax * rng)
+    return 0.5 <= ratio < 2.0
+
+
+_PRESCALED = {}      # cle fichier -> bool (lu une fois par fichier et par session)
+
+
+def _source_prescaled(src):
+    """Le fichier source stocke-t-il ses poids deja a l'echelle ? Lu sur le PLUS PETIT
+    tenseur quantifie qui porte une echelle: quelques Ko a lire, meme sur le disque USB.
+    Toute erreur = False: la cle de cache ne change alors pas."""
+    try:
+        fk = _file_key(src)
+    except OSError:
+        return False
+    if fk in _PRESCALED:
+        return _PRESCALED[fk]
+    res = False
+    try:
+        hdr = _safetensors_header(src)
+        best = None
+        for k, v in hdr.items():
+            if not (isinstance(v, dict) and k.endswith(".weight")):
+                continue
+            if str(v.get("dtype", "")).upper() not in ("F8_E4M3", "F8_E5M2", "I8"):
+                continue
+            sk = next((c for c in (k + "_scale", k[:-len(".weight")] + ".scale_weight")
+                       if c in hdr), None)
+            if sk is None:
+                continue
+            n = 1
+            for d in v.get("shape") or [1]:
+                n *= int(d)
+            if best is None or n < best[0]:
+                best = (n, k, sk)
+        if best:
+            from safetensors import safe_open
+            with safe_open(src, framework="pt", device="cpu") as f:
+                t = f.get_tensor(best[1])
+                s = f.get_tensor(best[2])
+            res = _stored_at_scale(t, s, t.dtype)
+    except Exception as e:
+        _dbg(f"prescaled check failed on {os.path.basename(src)}: {e}")
+        res = False
+    _PRESCALED[fk] = res
+    return res
 
 
 def _apply_quant_scale(t, s, key, path, cfg=None):
@@ -1760,7 +1861,7 @@ def _load_dequant_state_dict(path):
         pass
     _had = {}                                # cache Hadamard par taille de groupe
     sd = {}
-    n_dq = n_rot = 0
+    n_dq = n_rot = n_pre = 0
     for k in list(raw.keys()):
         if (k.endswith((".weight_scale", ".scale_weight", ".scale_input", ".input_scale"))
                 or k.endswith("scaled_fp8")):
@@ -1776,8 +1877,12 @@ def _load_dequant_state_dict(path):
                 if cand and cand in raw:
                     s = raw[cand]
                     break
+            qdt = t.dtype
             t = t.to(dev).to(torch.float32)
             cfg0 = qcfg.get(k[:-len(".weight")]) if k.endswith(".weight") else None
+            if s is not None and _stored_at_scale(t, s, qdt, cfg0):
+                s = None                     # deja a l'echelle: cf. _stored_at_scale
+                n_pre += 1
             if s is not None:
                 t = _apply_quant_scale(t, s.to(dev), k, path, cfg0)
             # ConvRot (int8_tensorwise comfy-quants): les poids stockes ont ete tournes
@@ -1806,6 +1911,7 @@ def _load_dequant_state_dict(path):
           else "read (already bf16/fp16, no dequant)")
          + f" ({len(sd)} kept"
          + (f", {n_rot} un-rotated (ConvRot)" if n_rot else "")
+         + (f", {n_pre} already stored at scale: weight_scale NOT applied" if n_pre else "")
          + f") to bf16 in {time.time() - t0:.1f}s")
     return sd
 

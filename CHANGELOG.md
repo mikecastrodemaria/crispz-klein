@@ -7,6 +7,27 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.34.1 — FP8 weights stored at scale, read as such
+
+`kleinFinalcutFP16FP8_comfyQuant` rendered coloured noise for every prompt, while its
+FP16 twin renders clean images. The file stores its FP8 weights **already at scale**
+and still ships a `weight_scale` (about 8.5e-4). The loader applied it, making every
+weight 1,200 to 1,700 times too small: the transformer produced nothing and the VAE
+decoded the starting noise. Measured on three tensors against the FP16 twin: relative
+error 0.999 with the scale, 0.058 without (plain FP8 rounding).
+
+`_stored_at_scale` tells the two layouts apart: largest stored value / (scale x format
+range, 448 for E4M3, 127 for INT8). A regular scaled file stores weight / scale, so the
+ratio is 1 / scale: 71 to 1,691 across the 16 other FP8/INT8 files of the library. This
+one sits at 1.03. When the stored values fill less than a quarter of the format range AND the ratio sits
+between 0.5 and 2, the scale describes the stored values themselves and is left out; MX exponent scales (uint8) are never
+concerned. The load log counts the tensors it left alone.
+
+The dequant cache had kept the wrong weights. The cache key changes for such files
+only (`bf16-v2-prescaled`), so every other model keeps its cache, and writing the new
+cache deletes the stale one of the same file. Regression tests in
+`tests/test_prescaled_fp8.py`, including a tiny file mixing both layouts.
+
 ## 1.34.0 — Swap the text encoder
 
 Models > Checkpoints gets a **Text encoder** picker. Default is the base repo's own
