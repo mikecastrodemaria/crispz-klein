@@ -7,6 +7,37 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.32.0 — The input image, named
+
+An img2img, an inpaint or an edit is defined as much by its input as by its prompt.
+One of the four save paths recorded it.
+
+| | before | now |
+|---|---|---|
+| batch img2img / upscale | `source`, basename hardcoded | honours the setting |
+| **single img2img / upscale** | nothing | `source` |
+| **inpaint / outpaint / reframe** | nothing | `source` |
+| **edit (omni)** | `refs: 2` — the count | `refs` **and** `ref_images` |
+
+The single img2img is the fork's most-used path and it recorded nothing at all. The
+edit said how many references it used but never which, which is the half that matters.
+
+**Name by default, not path** (`metadata_source`: `name` | `full` | `off`). The PNG
+travels — Civitai, a forum, a client — while the sidecar stays local, so a full path
+would export the folder tree and the Windows session name along with the picture. And
+in the UI a full path is worthless anyway: Gradio drops uploads into a temp folder that
+will not exist tomorrow, and only its **basename** carries the original file name.
+`full` earns its keep on batch inputs taken from a folder, where the path is still true
+next week.
+
+The extraction handles a path, a PIL opened from a file, and a `gr.ImageEditor` value —
+trying `background` before `composite`, since after a crop the composite is a fresh
+image with no name while the background still carries the loaded file's. When nothing
+can be known (a pasted or generated image), **nothing is written**: a missing field
+beats an invented one, the same rule as `loras_not_applied` in 1.31.0.
+
+Regression tests in `tests/test_gen_meta.py`.
+
 ## 1.31.0 — Metadata that describes the image, not the intention
 
 Three holes, all the same kind: an image that cannot be reproduced from its own file,

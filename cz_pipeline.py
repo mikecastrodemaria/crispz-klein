@@ -3661,6 +3661,56 @@ def txt2img_run(prompt, width, height, gen_steps, seed, negative_prompt="",
 # et l'op 'edit' du protocole). Ailleurs il ne l'est pas, et le dire serait mentir.
 _EDIT_MODES = ("omni", "edit")
 
+# ----------------------------------------------------------------------------
+# Image(s) d'ENTREE dans les metadonnees. Un img2img, un inpaint ou une edition sont
+# definis autant par leur entree que par leur prompt: sans elle, le fichier ne se
+# reproduit pas depuis lui-meme.
+#
+# NOM par defaut, pas chemin. Le PNG voyage (Civitai, forums, un client) alors que le
+# sidecar reste local: un chemin complet y exporterait l'arborescence du disque et le
+# nom de session Windows. Et cote UI il ne vaudrait de toute facon rien -- Gradio
+# depose les envois dans un dossier temporaire dont seul le NOM DE BASE porte le nom
+# d'origine du fichier. 'full' n'a de sens que sur les entrees prises dans un dossier
+# (traitement par lot), ou le chemin existe encore demain.
+# ----------------------------------------------------------------------------
+METADATA_SOURCE = str(CONFIG.get("metadata_source", "name") or "name").strip().lower()
+
+
+def _source_path_of(x, _depth=0):
+    """Chemin de fichier d'une entree image, ou None si on ne peut pas le savoir.
+
+    Accepte un chemin, une PIL ouverte depuis un fichier (.filename), ou la valeur
+    d'un gr.ImageEditor ({background, composite, layers}). Le fond est essaye AVANT
+    le composite: apres un recadrage le composite est une image neuve, sans nom."""
+    if not x or _depth > 2:
+        return None
+    if isinstance(x, str):
+        return x
+    if isinstance(x, dict):
+        for k in ("path", "name", "background", "composite", "image"):
+            p = _source_path_of(x.get(k), _depth + 1)
+            if p:
+                return p
+        return None
+    p = getattr(x, "filename", None)
+    return p if isinstance(p, str) and p else None
+
+
+def source_meta(items, key="source"):
+    """Fragment de metadonnees nommant la ou les images d'entree, ou {} si on ne sait
+    pas. Rien plutot qu'un nom invente: une metadonnee fausse est pire qu'absente."""
+    if METADATA_SOURCE in ("off", "none", "no", "0", "false"):
+        return {}
+    full = METADATA_SOURCE in ("full", "path", "abs")
+    vals = []
+    for it in (items if isinstance(items, (list, tuple)) else [items]):
+        p = _source_path_of(it)
+        if p:
+            vals.append(os.path.abspath(p) if full else os.path.basename(p))
+    if not vals:
+        return {}
+    return {key: vals[0] if len(vals) == 1 else vals}
+
 
 def _gen_meta(mode, prompt, negative="", seed=None, steps=None, guidance=None,
               size=None, model=None, styles=None, extra=None):
