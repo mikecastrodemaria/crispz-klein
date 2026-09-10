@@ -1123,12 +1123,27 @@ def _quant_metadata_formats(hdr):
         return set()
 
 
+# Signature d'un VAE (autoencodeur) range parmi les checkpoints: blocs de premier
+# niveau, puis marqueurs PROPRES a un VAE -- un encodeur texte T5 a lui aussi des cles
+# 'encoder.', mais jamais de post_quant_conv ni de decoder.conv_in.
+_VAE_TOP = ("encoder", "decoder", "quant_conv", "post_quant_conv", "bn")
+_VAE_MARKERS = ("post_quant_conv", "quant_conv", "decoder.conv_in", "decoder.mid")
+# Tout ce qui trahit un transformer de diffusion, prefixe ComfyUI ou non. Plus large que
+# le compteur `dit_keys` historique ('transformer_blocks', 'img_in'), qui ne voit pas
+# 'model.diffusion_model.double_blocks.*': reutilise ici, il aurait fait refuser comme
+# VAE les deux bundles tout-en-un de la bibliotheque, qui chargent tres bien.
+_DIT_MARKERS = ("transformer_blocks", "double_blocks", "single_blocks", "x_embedder",
+                "context_embedder", "img_in", "txt_in")
+
+
 def _safetensors_unsupported(path):
     """Renvoie une raison (str) si le .safetensors n'est PAS chargeable, sinon None.
     Lit juste l'en-tete (rapide). Trois cas restent non supportes:
       - fichier LoRA range dans le dossier checkpoints (cles kohya/peft)
       - SVDQuant / Nunchaku (tenseurs nommes '*.qweight'): poids pre-quantifies INT4
         qui exigent le runtime nunchaku (kernels dedies), pas dequantifiables ici.
+      - VAE seul (autoencodeur, souvent nomme 'diffusion_pytorch_model'): pas un
+        transformer, le pipeline prend son VAE dans le repo de base.
       - NVFP4 / MXFP4 (4 bits): ni dequant (l'empaquetage 4 bits et la convention de
         scale leur sont propres) ni runtime (TensorRT/ModelOpt). Les nommer est
         indispensable: un FP4 non reconnu n'a pas de dtype F8, donc il ECHAPPE au
@@ -1147,6 +1162,9 @@ def _safetensors_unsupported(path):
         lycoris_keys = 0
         te_keys = 0
         dit_keys = 0
+        dit_any = 0
+        vae_keys = 0
+        vae_marker = False
         for k, v in hdr.items():
             if k == "__metadata__" or not isinstance(v, dict):
                 continue
@@ -1164,6 +1182,13 @@ def _safetensors_unsupported(path):
                 te_keys += 1
             if "transformer_blocks" in k or k.startswith(("img_in", "txt_in")):
                 dit_keys += 1
+            if any(m in k for m in _DIT_MARKERS):
+                dit_any += 1
+            kk = k[4:] if k.startswith("vae.") else k
+            if kk.split(".", 1)[0] in _VAE_TOP:
+                vae_keys += 1
+                if kk.startswith(_VAE_MARKERS):
+                    vae_marker = True
             if (".lora_down." in k or ".lora_up." in k or ".lora_A." in k
                     or ".lora_B." in k or k.startswith(("lora_unet_", "lora_te"))):
                 lora_keys += 1
@@ -1186,6 +1211,17 @@ def _safetensors_unsupported(path):
         if te_keys >= 4 and dit_keys == 0:
             return ("text encoder (Qwen3), not an image model - the pipeline takes its "
                     "text encoder from the base repo; nothing to do with this file")
+        # VAE (autoencodeur) range avec les checkpoints. Il porte souvent le nom generique
+        # 'diffusion_pytorch_model.safetensors', celui que diffusers donne a TOUT
+        # composant -- d'ou la confusion avec un transformer. Charge comme tel, aucun
+        # poids ne trouve sa place, tout reste sur 'meta', et la generation plante sur
+        # "Cannot copy out of meta tensor". Un bundle tout-en-un (transformer + VAE) n'est
+        # PAS concerne: il porte des cles de transformer, la garde exige qu'il n'y en ait
+        # aucune.
+        if vae_keys >= 8 and vae_marker and dit_any == 0:
+            return ("VAE (autoencoder), not a transformer - the pipeline takes its VAE "
+                    "from the base repo, so this file does nothing here; move it out of "
+                    "the checkpoints folder")
         # '*.qweight' = poids pre-quantifies (SVDQuant/Nunchaku, GPTQ-like). Signal net:
         # un checkpoint BF16/FP16 normal n'a jamais de 'qweight'.
         if has_qweight:

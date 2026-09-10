@@ -7,6 +7,29 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.33.1 — A VAE among the checkpoints is refused by name
+
+`diffusion_pytorch_model.safetensors` sat in the checkpoints folder, showed up in the
+model menu, and crashed on "Cannot copy out of meta tensor" when picked. It is not a
+transformer shard but the FLUX.2 **VAE**: 160 MB, 251 tensors, all `encoder` /
+`decoder` / `bn` / `post_quant_conv`, not one transformer weight.
+"diffusion_pytorch_model" is the name diffusers gives the weights of *any* component,
+hence the confusion. Loaded as a transformer, none of its weights find a slot,
+everything stays on `meta`, and the first generation dies.
+
+`_safetensors_unsupported` now recognises it, next to the text-encoder guard: VAE block
+names, plus a marker only a VAE carries (`post_quant_conv`, `quant_conv`,
+`decoder.conv_in`), and **no transformer key at all**. That last condition matters: the
+two all-in-one bundles in the library (`gonzalomoKlein`, `flux2KleinAIO`) carry the very
+same 251 VAE tensors next to their transformer, and load fine. The historical
+transformer counter (`transformer_blocks`, `img_in`) misses their ComfyUI-prefixed
+`double_blocks` / `single_blocks` keys, so the guard uses a broader detector. A T5 text
+encoder has `encoder.*` keys too but no VAE marker, so it is not called a VAE either.
+
+Checked on the real library (20 files): the VAE is the only new refusal, and with the
+4B/9B check neutralised no 9B file is taken for a VAE. Regression tests in
+`tests/test_vae_guard.py`.
+
 ## 1.33.0 — The Undistilled preset now does what it says
 
 The *Undistilled* Performance preset (28 steps, CFG 3.5) never applied its CFG.
