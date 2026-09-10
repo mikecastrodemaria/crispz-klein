@@ -7,6 +7,32 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.35.0 — The boot check offers the GitHub update
+
+`boot_check.bat` (and its `_lan` / `_web` wrappers) now looks for new commits on
+GitHub before the diagnostics, and offers them: step `[MAJ]` lists up to eight of them and
+asks `O/N`. No answer within 20 s means N, and the app starts as it is: an update never
+runs on its own. O calls `update.bat`, which pulls, refreshes the dependencies only when
+the lock changed and re-checks torch and the pipelines; the boot then goes on with the new
+version. Offline, without git, or on a branch that tracks nothing, the step says so and
+moves on. `--no-update` or `CRISPZ_NO_UPDATE_CHECK=1` skips it.
+
+An update is offered only when it is safe (`_update_check.py`, standard library only):
+none of the incoming commits touches a file modified here, and none adds a file already
+present here outside git. Git refuses the first case; in the second it silently
+OVERWRITES an ignored file, which matters here since `tests/` is ignored and tests are
+force-added. A diverged branch is not offered either. Otherwise the step names the files
+in the way and starts the app untouched.
+
+`update.bat` / `update.sh` use the same guard. They refused any pull as soon as
+`git status` showed anything, untracked folders included, so a `wildcards/_backup-*`
+folder or one edited test blocked every update; local changes that the incoming commits
+do not touch now stay as they are. Their final check imported the Z-Image pipelines, a leftover from
+crispz-studio: it now imports the FLUX.2 Klein ones, like `boot_check.bat` does. `update.bat` now ends with an explicit exit
+code, so the boot can tell a finished update from a failed one.
+
+Regression tests in `tests/test_update_check.py`, on real temporary git repositories.
+
 ## 1.34.3 — Picking Default survives a restart; the queue test follows the snapshot
 
 Two follow-ups to 1.34.0, both found while porting it to crispz-studio.
