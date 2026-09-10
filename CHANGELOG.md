@@ -7,6 +7,23 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.32.1 — Two tools that measured the wrong thing
+
+**The pre-cache sized an all-in-one bundle by its whole file.** `bf16_gb()` counted
+every tensor, so `gonzalomoKlein_v10` was announced at 29.4 GB. It writes 16.9: the file
+carries 936 tensors of a Qwen3-8B text encoder and a VAE beside its 201 transformer
+tensors, and `_load_dequant_state_dict` keeps only `model.diffusion_model.*`. The
+estimate now applies the same filter. Caught by the rebuild itself, whose watcher
+reported 16.9 GB written where the plan said 29.4. The error ran in the safe direction
+-- the plan asked for 162 GB of cap where 150 were needed -- but a number the tool
+prints has to be true.
+
+**The bench measured the configuration of the day, not the model.** It never reset
+`LORAS`, which the app seeds from `default_loras` at start-up. With an empty config it
+happened to be right; with a LoKr there, every one of the 27 models would have carried
+a ~24 s merge in its load time, changed images, and a stream of warnings on the 4B
+group. Models are now measured bare, explicitly, and the report says so.
+
 ## 1.32.0 — The input image, named
 
 An img2img, an inpaint or an edit is defined as much by its input as by its prompt.

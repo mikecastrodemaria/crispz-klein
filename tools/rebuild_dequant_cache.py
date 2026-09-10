@@ -79,14 +79,25 @@ _SCALE_SUFFIXES = ("_scale", "_scale_inv", ".scale_weight", ".comfy_quant")
 def bf16_gb(path):
     """Poids du bf16 qui sera ecrit dans le cache, lu a l'EN-TETE seule (aucun
     chargement). Recoupe avec le cache existant: 16.9 Go annonces, 16.9 Go sur le
-    disque pour rayKlein9bBFS_fp8V2."""
+    disque pour rayKlein9bBFS_fp8V2.
+
+    Bundle tout-en-un (transformer + encodeur texte + VAE, prefixe ComfyUI): on ne
+    compte QUE le transformer, exactement le filtre de _load_dequant_state_dict. La
+    premiere version comptait le fichier entier et annoncait 29.4 Go pour
+    gonzalomoKlein_v10, qui en ecrit 16.9 -- 936 tenseurs d'un Qwen3-8B et le VAE ne
+    vont jamais dans le cache. Erreur dans le sens prudent, mais le plafond reclame
+    etait gonfle d'autant."""
     try:
         hdr = czp._safetensors_header(path)
     except Exception:
         return 0.0
+    prefix = czp._COMFY_PREFIX if any(
+        k.startswith(czp._COMFY_PREFIX) for k in hdr if k != "__metadata__") else ""
     n = 0
     for k, v in hdr.items():
         if k == "__metadata__" or not isinstance(v, dict) or k.endswith(_SCALE_SUFFIXES):
+            continue
+        if prefix and not k.startswith(prefix):
             continue
         c = 1
         for s in (v.get("shape") or []):

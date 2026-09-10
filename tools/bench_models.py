@@ -236,6 +236,7 @@ def _write_report(rows):
         "- **1re image**: la premiere apres chargement -- noyaux CUDA, cache d'embeddings",
         "  vide. Cout paye une fois, a ne pas confondre avec le regime.",
         "- **Regime**: moyenne des images suivantes. Le seul chiffre comparable.",
+        "- **Modeles nus**: aucune LoRA ni LoKr, quelle que soit la config du moment.",
         "",
         "- **Cache**: etat du cache de dequantification AVANT le test. `froid` = le",
         "  chargement inclut la conversion FP8/INT8 vers bf16 (minutes). Une colonne",
@@ -284,6 +285,13 @@ def _bench_one(name, path, variant):
         print(f"    base repo -> {base}")
         P.set_zimage_model(base)
     P.set_zimage_transformer(path if os.path.isfile(path) else None)
+    # Le modele SEUL: aucune LoRA, aucune LoKr, aucun jeu d'edition. LORAS est
+    # initialise depuis `default_loras` au demarrage de l'app; sans cette remise a
+    # zero le banc mesurerait la config du jour et non le modele -- une LoKr fusionnee
+    # ajoute ~24 s a chaque chargement, change chaque image, et un 9B pose sur une
+    # base 4B y deverserait ses avertissements.
+    P.LORAS = []
+    P.EDIT_LORAS = []
     # Etat vide AVANT la mesure: sinon on mesurerait un echange de transformer a
     # chaud (VAE + encodeur gardes), pas un chargement.
     P.free_vram()
