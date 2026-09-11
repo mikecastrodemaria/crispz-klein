@@ -23,6 +23,8 @@ import urllib.request
 import cz_core
 from cz_core import (
     CONFIG, DESCRIBE_INSTRUCTION, IMPROVE_INSTRUCTION, COMPOSE_INSTRUCTION,
+    DESCRIBE_STYLES, DESCRIBE_LENGTHS, DEFAULT_DESCRIBE_STYLE, DEFAULT_DESCRIBE_LENGTH,
+    CUSTOM_STYLE, DESCRIBE_CUSTOM, SHORT_CAPTION_STYLE, describe_instruction,
     _prefs, _dbg, _pil_to_b64_jpeg,
 )
 
@@ -34,6 +36,43 @@ OLLAMA_URL = (os.environ.get("OLLAMA_URL") or _prefs.get("ollama_url")
 OLLAMA_KEEP_ALIVE = CONFIG.get("ollama_keep_alive", 0)
 # Force Ollama sur CPU (num_gpu=0) -> 0 VRAM partagee avec le modele (plus lent).
 OLLAMA_CPU = bool(CONFIG.get("ollama_cpu", False))
+# Contexte et longueur de reponse envoyes a chaque appel. Sans num_ctx, Ollama prend celui
+# du Modelfile : 131 072 pour Agents-A1-4B, soit 6,45 Go de VRAM au lieu de 3,33 Go a 8192
+# (mesure le 2026-09-11). Sans num_predict, un modele qui boucle ne s'arrete jamais.
+# 0 = laisser la valeur d'Ollama.
+OLLAMA_NUM_CTX = int(CONFIG.get("ollama_num_ctx", 8192) or 0)
+OLLAMA_NUM_PREDICT = int(CONFIG.get("ollama_num_predict", 700) or 0)
+# Temperature de Describe : basse = description fidele (null = celle du modele). Improve
+# et la fusion de Vision Mix gardent celle du modele.
+OLLAMA_DESCRIBE_TEMPERATURE = CONFIG.get("ollama_describe_temperature", 0.3)
+
+
+def describe_style_choices():
+    """Styles de Describe proposes dans Prompt AI (+ celui de config.txt s'il existe)."""
+    return list(DESCRIBE_STYLES) + ([CUSTOM_STYLE] if DESCRIBE_CUSTOM else [])
+
+
+def _initial_style():
+    s = _prefs.get("describe_style")
+    if s in describe_style_choices():
+        return s
+    return CUSTOM_STYLE if DESCRIBE_CUSTOM else DEFAULT_DESCRIBE_STYLE
+
+
+# Style et longueur de Describe courants : choix de Prompt AI (preferences.json).
+DESCRIBE_STYLE = _initial_style()
+DESCRIBE_LENGTH = (_prefs.get("describe_length") if _prefs.get("describe_length") in DESCRIBE_LENGTHS
+                   else DEFAULT_DESCRIBE_LENGTH)
+
+
+def set_describe_style(style=None, length=None):
+    """Change le style / la longueur de Describe ; une valeur inconnue est ignoree."""
+    global DESCRIBE_STYLE, DESCRIBE_LENGTH
+    if style in describe_style_choices():
+        DESCRIBE_STYLE = style
+    if length in DESCRIBE_LENGTHS:
+        DESCRIBE_LENGTH = length
+    return DESCRIBE_STYLE, DESCRIBE_LENGTH
 
 
 # Balises de raisonnement des modeles "thinking". Non-greedy, insensible a la casse,
@@ -63,14 +102,44 @@ def _strip_thinking(text):
     return t.strip()
 
 
-def _ollama_gen_opts():
-    """Options communes pour /api/generate (keep_alive + CPU optionnel).
+# Nettoyage deterministe des descriptions. Malgre la consigne, un petit modele (mesure sur
+# Agents-A1-4B le 2026-09-11) ecrit encore "No text is visible." ou "appears to be" : une
+# absence enoncee peut faire apparaitre la chose dans l'image, une hesitation ne dit rien.
+_ABSENCE_RE = re.compile(r"(?i)\b(?:no|without any)\s+(?:visible\s+|other\s+|legible\s+)?"
+                         r"(?:text|people|person|one|words|writing|signage|figures|humans)\b"
+                         r"|\bnot visible\b|\b(?:is|are) absent\b")
+
+
+def clean_description(text):
+    """Retire les phrases qui enoncent une absence et les tournures d'hesitation. Une
+    reponse d'une seule phrase (liste de tags) n'est jamais videe."""
+    t = (text or "").strip()
+    kept = [s for s in re.split(r"(?<=[.!?])\s+", t) if not _ABSENCE_RE.search(s)]
+    out = " ".join(kept) if kept else t
+    out = re.sub(r"(?i)\b(?:appears|seems) to be\b", "is", out)
+    out = re.sub(r"(?i)\b(?:appear|seem) to be\b", "are", out)
+    out = re.sub(r"(?i),?\s*\b(?:likely|possibly|probably|perhaps)\b,?", "", out)
+    return re.sub(r"\s{2,}", " ", out).replace(" ,", ",").replace(" .", ".").strip()
+
+
+def _ollama_gen_opts(temperature=None):
+    """Options communes pour /api/generate : keep_alive, contexte et longueur de reponse
+    plafonnes, temperature si donnee, CPU optionnel.
 
     `think: false` coupe le raisonnement des modeles qui le supportent. Les autres
     renvoient 400 -> _ollama_http rejoue sans le champ (cf. docstring du module)."""
     p = {"stream": False, "keep_alive": OLLAMA_KEEP_ALIVE, "think": False}
+    opts = {}
+    if OLLAMA_NUM_CTX > 0:
+        opts["num_ctx"] = OLLAMA_NUM_CTX
+    if OLLAMA_NUM_PREDICT > 0:
+        opts["num_predict"] = OLLAMA_NUM_PREDICT
+    if temperature is not None:
+        opts["temperature"] = float(temperature)
     if OLLAMA_CPU:
-        p["options"] = {"num_gpu": 0}
+        opts["num_gpu"] = 0
+    if opts:
+        p["options"] = opts
     return p
 
 
@@ -127,14 +196,23 @@ def _ollama_vision_models(base=None):
     return vision
 
 
-def _ollama_describe(image, model, base=None):
-    """Decrit l'image en un prompt text-to-image via un modele vision Ollama."""
-    _dbg(f"ollama describe: url={base or OLLAMA_URL} model={model}")
+def _ollama_describe(image, model, base=None, style=None, length=None):
+    """Decrit l'image en un prompt text-to-image via un modele vision Ollama, dans le style
+    et la longueur choisis dans Prompt AI (ou ceux passes), puis nettoie la reponse."""
+    style, length = style or DESCRIBE_STYLE, length or DESCRIBE_LENGTH
+    _dbg(f"ollama describe: url={base or OLLAMA_URL} model={model} style={style} length={length}")
     b64 = _pil_to_b64_jpeg(image, max_side=1024)
     out = _ollama_http("/api/generate",
-                       {"model": model, "prompt": DESCRIBE_INSTRUCTION, "images": [b64],
-                        **_ollama_gen_opts()}, base=base, timeout=180)
-    return _strip_thinking(out.get("response"))
+                       {"model": model, "prompt": describe_instruction(style, length),
+                        "images": [b64], **_ollama_gen_opts(OLLAMA_DESCRIBE_TEMPERATURE)},
+                       base=base, timeout=180)
+    return clean_description(_strip_thinking(out.get("response")))
+
+
+def _ollama_caption(image, model, base=None):
+    """Legende d'une phrase via un modele vision Ollama : le Caption model "ollama:<nom>"
+    (Auto-describe d'Inpaint/Outpaint, repli de Describe)."""
+    return _ollama_describe(image, model, base=base, style=SHORT_CAPTION_STYLE)
 
 
 def _ollama_improve(prompt_text, model, base=None):

@@ -7,6 +7,38 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## 1.36.0 — Describe writes a prose prompt that rebuilds the image, in the style you pick
+
+Describe asked the vision model for comma-separated tags in six categories: about 40
+words, padded with "8k resolution", vague about the medium. Measured on 2026-09-11 with
+Agents-A1-4B and muse-glimmer (three images of known prompt, each description regenerated
+by klein 4B at the same seed): without the medium, a pencil portrait came back as a
+photograph; a text quoted line by line came back with its lines mixed. The default
+instruction is now one prose paragraph that starts with the medium and style, then
+subject, clothing, pose, setting with positions, camera, lighting, palette and mood; it
+quotes a sign or a title once, in reading order; it never states what is absent and never
+hedges. A deterministic cleanup removes the absence sentences and hedges that a small
+model writes anyway.
+
+**Prompt AI → Describe style**: *Prompt (prose)* (the measured one), *Prompt (tags)*,
+*Photo (technical)*, *Art & style*, *Composition & layout*, *Character sheet*, *Text &
+typography*, *Short caption*; **Length** from 60 to 300 words; the instruction sent is
+shown under them, and the choice is remembered. Vision Mix describes its references in
+the same style (medium length). A personal `ollama_describe_prompt` becomes the *Custom
+(config.txt)* style; the pre-1.36 sample, copied into most config.txt files, counts as no
+customization (same for the Improve and Compose samples, which no longer force tags:
+Improve keeps the prompt's form, Compose writes one paragraph).
+
+Ollama calls now send `num_ctx` 8192 (the Agents-A1-4B Modelfile loads 131 072: 6.45 GB of
+VRAM instead of 3.33 GB) and cap the answer at `num_predict` 700 tokens (a model stuck in a
+loop used to run without end); Describe runs at temperature 0.3. All three in config.txt.
+
+Also: Ollama is detected when the page loads and the chosen vision model is remembered
+(the list stayed empty until *Detect*, so Describe silently used BLIP); Describe falls back
+to the caption model when Ollama fails instead of stopping on an error; **Caption model**
+accepts an Ollama vision model (`ollama:<name>`) for the Inpaint/Outpaint Auto-describe,
+with BLIP taking over if Ollama fails. Tests in `tests/test_describe_styles.py`.
+
 ## 1.35.1 — The text-encoder list shows the Hugging Face cache
 
 An encoder downloaded from Hugging Face lives in the HF cache, and the Text encoder list
