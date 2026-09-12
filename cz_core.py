@@ -32,7 +32,7 @@ import torch
 from PIL import Image
 
 # Version de l'application (affichee dans le titre; entrees CHANGELOG.md par version).
-APP_VERSION = "1.36.0"
+APP_VERSION = "1.36.1"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PREFS_PATH = os.path.join(HERE, "preferences.json")
@@ -157,7 +157,9 @@ def _instruction(key, legacy, default):
 # chaque description regeneree par klein 4B a la meme seed) : sans le medium en tete, un
 # portrait au crayon revenait en photo ; un texte cite ligne par ligne revenait avec ses
 # lignes melangees ; une absence enoncee ("No text is visible") ou une hesitation
-# ("appears to be") n'apporte rien au prompt. Les autres styles suivent les memes regles.
+# ("appears to be") n'apporte rien au prompt. Le 2026-09-12, meme banc : l'epoque (que la
+# consigne "Dataset paragraph" de Captionz demande) remonte la fidelite du portrait de 0,54
+# a 0,65-0,66 sur les deux modeles. Les autres styles suivent les memes regles.
 _DESCRIBE_RULES = (
     "Describe only what is present: never mention what is absent. State every detail as a "
     "fact: no \"appears\", \"seems\", \"likely\", \"possibly\", \"as if\". No filler "
@@ -176,7 +178,7 @@ DESCRIBE_STYLES = {
         "(materials, colors, fit); pose and action; setting from foreground to background, "
         "with positions (left, right, center); camera (shot size, angle, lens, focus); "
         "lighting (sources, direction, softness, color temperature); color palette with "
-        "precise color names; time of day and weather when they are clear; mood. "
+        "precise color names; time of day, weather and era when they are identifiable; mood. "
         + _DESCRIBE_TEXT_RULE + _DESCRIBE_RULES + "Output only the paragraph."),
     "Prompt (tags)": (
         "Describe this image as a text-to-image prompt made of about {words} words of "
@@ -220,6 +222,12 @@ DESCRIBE_STYLES = {
         "place, size, font style (serif, sans-serif, script, hand-lettered...), color and "
         "material. Then describe the support (sign, poster, screen, label...) and the "
         "setting. Never guess blurry or partial text. " + _DESCRIBE_RULES
+        + "Output only the paragraph."),
+    "Dataset paragraph": (
+        "Describe this image in one detailed paragraph of about {words} words: subjects and "
+        "characters, objects, setting, era if identifiable, medium and technique (photo, "
+        "painting, 3D render, illustration...), visual style and mood. Use concrete visual "
+        "terms. End with the aspect ratio and orientation. " + _DESCRIBE_RULES
         + "Output only the paragraph."),
     SHORT_CAPTION_STYLE: (
         "Describe this image in one short sentence of at most {words} words: the medium, the "

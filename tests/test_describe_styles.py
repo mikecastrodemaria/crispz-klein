@@ -21,7 +21,8 @@ import cz_ollama as O
 def test_the_default_style_is_the_measured_v4():
     t = C.describe_instruction(C.DEFAULT_DESCRIBE_STYLE, C.DEFAULT_DESCRIBE_LENGTH)
     for must in ("Begin with the medium and style", "single string in double quotes",
-                 "about 180 words", "never mention what is absent", "State every detail as a fact"):
+                 "about 180 words", "never mention what is absent", "State every detail as a fact",
+                 "era when they are identifiable"):   # l'epoque : +0,11 de fidelite sur le portrait
         assert must in t, must
     assert "comma-separated" not in t and "{words}" not in t, t
     for s in C.DESCRIBE_STYLES:
@@ -32,6 +33,9 @@ def test_the_default_style_is_the_measured_v4():
     assert "at most 25 words" in C.describe_instruction(C.SHORT_CAPTION_STYLE, "Very long")
     # inconnu -> le defaut
     assert C.describe_instruction("nope", "nope") == t
+    # la legende de dataset de Captionz, gardee comme style a part (labelling)
+    ds = C.describe_instruction("Dataset paragraph", "Medium")
+    assert "aspect ratio" in ds and "era if identifiable" in ds and "about 120 words" in ds, ds
     print("OK test_the_default_style_is_the_measured_v4")
 
 
