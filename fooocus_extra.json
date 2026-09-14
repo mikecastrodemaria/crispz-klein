@@ -1,10 +1,10 @@
 {
   "manifest_version": 1,
-  "id": "crispz",
-  "name": "Crispz - FLUX.2 Klein upscaler + detailer",
-  "version": "0.1.0",
-  "description": "ESRGAN upscale + FLUX.2 Klein refinement pass (img2img BF16). External process, invoked via CLI.",
-  "repo": "https://github.com/mikecastrodemaria/crispz",
+  "id": "crispz-klein",
+  "name": "crispz-klein - FLUX.2 Klein upscaler + detailer",
+  "version": "1.36.1",
+  "description": "ESRGAN upscale + FLUX.2 Klein refinement pass (img2img BF16), from crispz-klein. External process, invoked via CLI.",
+  "repo": "https://github.com/mikecastrodemaria/crispz-klein",
   "license_note": "Models pulled separately (HuggingFace for FLUX.2 Klein, local ESRGAN folder).",
   "runtime": {
     "type": "cli",
