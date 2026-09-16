@@ -7,6 +7,29 @@ Entries at 1.17.0 and below are inherited from crispz-qwen-edit / crispz-studio 
 describe the Qwen-Image engine. The fork to FLUX.2 Klein is documented in
 [FORK.md](FORK.md).
 
+## Unreleased — Improve prompt and negative: directives, format and syntax kept
+
+Improve is rebuilt on `prompt_improve.py`, the module shared by the crispz family
+(instructions and pure functions from Fooocus2026 custom-28, custom-31, custom-34).
+
+Two instructions, positive and negative; the **Improve negative** button stays hidden
+on Klein (the negative has no effect). The positive instruction is now the family one:
+the input format note computed in code replaces the old wording. A **✎** button next
+to each Improve opens a directives box for one rewrite. The input format (tags or
+prose) is detected and stated to the model, and the `{a|b|c}` / `__wildcard__` syntax
+is protected. CLI: `--improve`, `--improve-negative`, `--directives`,
+`--improve-model`.
+
+Improve lists every installed model (not only vision ones). A failure keeps the text
+and says why: the silent local keyword fallback and `improve_local_keywords` are gone.
+New config block `ollama_improve`; a custom `ollama_improve_prompt` is still honored,
+`keep_alive` stays 0. The Ollama transport, shared with Describe and Vision Mix, uses
+127.0.0.1 (a configured `localhost` is rewritten), ignores system proxy variables and
+replays without `think` on HTTP 400.
+
+Tests: `tests/test_prompt_improve.py` (the 31 reference tests + transport and
+settings), `tests/test_improve_wiring.py` (UI handlers, CLI, config compatibility).
+
 ## Unreleased — `{a|b|c}` variant groups in every prompt entry point
 
 Prompts accept the *dynamic prompts* syntax (`{a|b|c}`, `{a|}`, `{2$$a|b|c}`,

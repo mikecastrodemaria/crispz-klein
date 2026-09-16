@@ -136,8 +136,7 @@ On top of crispz's upscaler it adds:
   (`requirements-extra.txt`); absence of marks never means "not AI".
 - **Ollama (optional)**: **Describe** (image→prompt, in a **style** you pick), **Improve
   prompt**, and **Vision Mix** (blend several reference images into one prompt). Models
-  unload from VRAM after use. Without Ollama, **Describe** uses a local BLIP captioner and
-  **Improve prompt** falls back to a local rule-based pass — both work fully offline.
+  unload from VRAM after use. Without Ollama, **Describe** uses a local BLIP captioner (fully offline); **Improve** (prompt and negative, optional directives) needs Ollama.
 - **Fooocus-style UI**: big contained preview + batch gallery (arrows + fullscreen),
   prompt + Generate + **Stop**, dark theme, Settings (aspect/performance/batch **1–30**),
   **277 styles** (search + hover previews), and a **crop editor** on every image input.
@@ -273,11 +272,28 @@ gone: klein edits with the base model).
   fidelity from 0.54 to 0.65 on both models. The other styles follow the same rules. A small vision model
   (Agents-A1-4B, 3.3 GB) describes in 1-5 s next to the image model; a 28B one
   (muse-glimmer, ~21 GB) is richer but needs the GPU to itself.
-- **Improve prompt**: rewrites the current prompt via the same Ollama model, keeping its
-  form (prose stays prose, tags stay tags). URL + model in Advanced → **Prompt AI**. Tune
-  the instructions in `config.txt`. **Without Ollama** it falls back to a local
-  rule-based pass that appends quality tags (`improve_local_keywords` in `config.txt`) —
-  instant, no model.
+- **Improve prompt**: rewrites the current prompt richer, same subject and intent, no
+  generic filler. The input **format** is detected in code and kept: a tag list stays a
+  tag list, prose stays prose (`ollama_improve.format`: auto | tags | prose | off). The
+  `{a|b|c}` variant groups and `__wildcards__` are protected; the console says so if a
+  model drops them anyway.
+- **Improve negative** — never on FLUX.2 Klein: the negative prompt has no effect on
+  this distilled model, so the button is hidden.
+- **Directives**: the small **✎** button next to each Improve opens a box for your own
+  instructions for ONE rewrite ("more cinematic, under 60 words, in French"); they win
+  over the built-in rules and are never saved. The plain Improve button still works in
+  one click.
+- **Model**: Advanced → **Prompt AI** → *Improve model* lists **every** installed model
+  (a text model is enough). Empty = `ollama_improve.model`, else the first installed
+  model.
+- **Without Ollama** Improve does nothing and says why (Ollama stopped, no model, empty
+  answer from a reasoning model) — the text is left untouched.
+- **Config** (`config.txt`): the `ollama_improve` block — `enabled`, `endpoint` (empty =
+  the Ollama URL), `model`, `timeout`, `temperature`, `keep_alive` (0 = unload right
+  after the answer, the GPU is shared with generation), `positive_instruction`,
+  `negative_instruction`, `default_negative`, `format`. A custom `ollama_improve_prompt`
+  is still honored. The Ollama transport uses `127.0.0.1` (a `localhost` URL is
+  rewritten) and ignores system proxy variables.
 - **Caption model** (Prompt AI): the Describe fallback and the **Auto-describe** toggle
   in Inpaint / Outpaint. `blip-large` (default, richer) · `blip-base` (lighter), local,
   downloaded on first use — or `ollama:<model>`, one of your Ollama vision models (listed
