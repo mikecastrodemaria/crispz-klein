@@ -194,7 +194,8 @@ import cz_ollama  # noqa: E402
 from cz_ollama import (  # noqa: E402,F401
     OLLAMA_URL, OLLAMA_KEEP_ALIVE, OLLAMA_CPU, _ollama_gen_opts, _ollama_http,
     _ollama_vision_models, _ollama_describe, _ollama_improve, _ollama_compose,
-    _local_improve, set_describe_style, describe_style_choices,
+    improve_prompt, improve_negative, list_text_models, IMPROVE_ENABLED, OllamaError,
+    set_describe_style, describe_style_choices,
 )
 from cz_core import DESCRIBE_LENGTHS, describe_instruction  # noqa: E402
 
@@ -1285,6 +1286,19 @@ def _remembered_vision_model():
         return None
 
 
+def _ui_detect_improve_models(url):
+    """Liste TOUS les modeles Ollama pour Improve (reecrire du texte n'exige pas la
+    vision). Ollama injoignable -> liste vide (le statut vient de _ui_detect_ollama)."""
+    try:
+        return gr.update(choices=list_text_models(base=url), value=None)
+    except Exception:
+        return gr.update(choices=[], value=None)
+
+
+# Improve du negatif dans l'UI: masque quand le negatif n'a aucun effet sur le modele.
+IMPROVE_NEGATIVE_UI = False
+
+
 def _ui_detect_ollama(url):
     """Detecte Ollama et liste UNIQUEMENT les modeles vision (Describe, Vision Mix, Caption
     model). Appele aussi au chargement de la page : la liste restait vide jusqu'au clic
@@ -1347,18 +1361,37 @@ def _ui_describe(image, model, url):
         return gr.update(), f"No Ollama model selected and local captioner failed: {e}"
 
 
-def _ui_improve(prompt_text, model, url):
-    """Ameliore le prompt courant. Ollama si un modele est choisi, sinon fallback LOCAL
-    (rule-based, sans Ollama): ajoute des mots-cles de qualite."""
+def _ui_improve(prompt_text, model, url, directives=""):
+    """Improve du prompt POSITIF via Ollama (prompt_improve). Modele: celui choisi pour
+    Improve, sinon ollama_improve.model, sinon le premier installe. `directives`: consignes
+    libres pour CET appel (jamais sauvegardees). Echec -> le texte n'est pas touche et le
+    statut dit pourquoi (plus de repli silencieux sur des mots-cles locaux)."""
     if not (prompt_text or "").strip():
         return gr.update(), "Type a prompt first."
-    if not model:
-        return gr.update(value=_local_improve(prompt_text)), \
-            "Improved locally (quality tags, no Ollama). Pick a model in Advanced > Prompt AI for a full rewrite."
     try:
-        return gr.update(value=_ollama_improve(prompt_text, model, base=url)), f"Improved via {model}."
-    except Exception as e:
-        return gr.update(value=_local_improve(prompt_text)), f"Ollama failed ({e}); improved locally instead."
+        out, used = improve_prompt(prompt_text, "positive", model or None, url, directives)
+    except OllamaError as e:
+        return gr.update(), f"⚠ Improve failed: {e}"
+    extra = " with your directives" if (directives or "").strip() else ""
+    return gr.update(value=out), f"Improved via {used}{extra}."
+
+
+def _ui_improve_negative(negative_text, model, url, directives=""):
+    """Improve du prompt NEGATIF. Case vide: part du negatif standard et le fait etendre;
+    Ollama injoignable -> le negatif standard est insere tel quel avec un avertissement."""
+    try:
+        out, used, warn = improve_negative(negative_text, model or None, url, directives)
+    except OllamaError as e:
+        return gr.update(), f"⚠ Improve negative failed: {e}"
+    if warn:
+        return gr.update(value=out), f"⚠ Ollama unavailable: {warn}."
+    extra = " with your directives" if (directives or "").strip() else ""
+    return gr.update(value=out), f"Negative improved via {used}{extra}."
+
+
+def _ui_toggle_panel(opened):
+    """Bouton ✎ a cote d'un Improve: deplie / replie son panneau de directives."""
+    return (not opened), gr.update(visible=not opened)
 
 
 def _ui_set_caption_model(kind):
@@ -3648,7 +3681,34 @@ def build_ui():
                         value=bool(CONFIG.get("default_auto_upscale", False)), scale=4,
                         label="Upscale after generate — chain each txt2img image through the "
                               "Upscale pipeline (ESRGAN + refine), no manual step")
-                    improve_btn = gr.Button("Improve prompt", scale=1, min_width=150)
+                    improve_btn = gr.Button("Improve prompt", scale=1, min_width=130,
+                                            visible=IMPROVE_ENABLED)
+                    improve_dir_btn = gr.Button("✎", scale=0, min_width=44,
+                                                visible=IMPROVE_ENABLED,
+                                                elem_id="cz_improve_dir")
+                    improve_neg_btn = gr.Button("Improve negative", scale=1, min_width=130,
+                                                visible=IMPROVE_ENABLED and IMPROVE_NEGATIVE_UI)
+                    improve_neg_dir_btn = gr.Button("✎", scale=0, min_width=44,
+                                                    visible=IMPROVE_ENABLED and IMPROVE_NEGATIVE_UI,
+                                                    elem_id="cz_improve_neg_dir")
+                # Directives d'Improve (un appel, jamais sauvegardees): le bouton ✎ deplie le
+                # panneau; le bouton Improve simple garde son comportement en un clic.
+                improve_dir_open = gr.State(False)
+                with gr.Row(visible=False) as improve_dir_row:
+                    improve_directives = gr.Textbox(
+                        show_label=False, lines=2, max_lines=2, scale=4, container=False,
+                        placeholder="Directives for this rewrite (prompt), e.g. more cinematic, "
+                                    "under 60 words, in French")
+                    improve_dir_go = gr.Button("Improve with these directives", scale=1,
+                                               min_width=150)
+                improve_neg_dir_open = gr.State(False)
+                with gr.Row(visible=False) as improve_neg_dir_row:
+                    improve_neg_directives = gr.Textbox(
+                        show_label=False, lines=2, max_lines=2, scale=4, container=False,
+                        placeholder="Directives for this rewrite (negative), e.g. keep it short, "
+                                    "no anatomy terms")
+                    improve_neg_dir_go = gr.Button("Improve with these directives", scale=1,
+                                                   min_width=150)
                 detail_faces_cb = gr.Checkbox(
                     value=cz_detailer.DETAILER_ENABLED,
                     label="🔧 Detail faces — after each render (and upscale), detect faces and "
@@ -4098,8 +4158,12 @@ def build_ui():
                                                 info="Local LLM server. Used for Describe (vision) "
                                                      "and Improve prompt.")
                         detect_btn = gr.Button("Detect Ollama (vision models)", size="sm", variant="primary")
-                        ollama_model = gr.Dropdown([], label="Vision model (Describe / Improve)",
+                        ollama_model = gr.Dropdown([], label="Vision model (Describe)",
                                                    interactive=True)
+                        improve_model = gr.Dropdown(
+                            [], label="Improve model (any text model)", interactive=True,
+                            info="Empty = ollama_improve.model in config.txt, else the first "
+                                 "installed model.")
                         ollama_status = gr.Markdown("*Detecting Ollama... (Detect scans again). If "
                                                     "Ollama is off, Describe falls back to the "
                                                     "caption model.*")
@@ -4540,13 +4604,25 @@ def build_ui():
         log_level_dd.change(set_log_level, [log_level_dd], [log_level_status])
         caption_model_dd.change(_ui_set_caption_model, [caption_model_dd], [caption_model_status])
         detect_btn.click(_ui_detect_ollama, [ollama_url], [ollama_model, ollama_status, caption_model_dd])
+        detect_btn.click(_ui_detect_improve_models, [ollama_url], [improve_model])
         ollama_model.change(_ui_remember_vision_model, [ollama_model], None)
         describe_style_dd.change(_ui_set_describe_style, [describe_style_dd, describe_length_dd],
                                  [describe_preview])
         describe_length_dd.change(_ui_set_describe_style, [describe_style_dd, describe_length_dd],
                                   [describe_preview])
         describe_btn.click(_ui_describe, [describe_img, ollama_model, ollama_url], [prompt, describe_status])
-        improve_btn.click(_ui_improve, [prompt, ollama_model, ollama_url], [prompt, improve_status])
+        improve_btn.click(_ui_improve, [prompt, improve_model, ollama_url], [prompt, improve_status])
+        improve_dir_btn.click(_ui_toggle_panel, [improve_dir_open],
+                              [improve_dir_open, improve_dir_row])
+        improve_dir_go.click(_ui_improve, [prompt, improve_model, ollama_url, improve_directives],
+                             [prompt, improve_status])
+        improve_neg_btn.click(_ui_improve_negative, [negative, improve_model, ollama_url],
+                              [negative, improve_status])
+        improve_neg_dir_btn.click(_ui_toggle_panel, [improve_neg_dir_open],
+                                  [improve_neg_dir_open, improve_neg_dir_row])
+        improve_neg_dir_go.click(_ui_improve_negative,
+                                 [negative, improve_model, ollama_url, improve_neg_directives],
+                                 [negative, improve_status])
         compose_btn.click(_ui_compose, [cref1, cref2, cref3, cref4, ollama_model, ollama_url],
                           [prompt, compose_status])
         rembg_btn.click(_ui_remove_bg, [rembg_img, history, save_mode, output_dir],
@@ -4634,6 +4710,7 @@ def build_ui():
         ).then(_ui_generate, inputs=_gen_inputs, outputs=_gen_outputs)
         # Au chargement de la page : detecte Ollama et reprend le modele vision retenu.
         demo.load(_ui_detect_ollama, [ollama_url], [ollama_model, ollama_status, caption_model_dd])
+        demo.load(_ui_detect_improve_models, [ollama_url], [improve_model])
     global _DEMO
     _DEMO = demo  # pour autoriser a la volee les dossiers de sortie changes dans l'UI
     return demo

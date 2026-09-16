@@ -65,12 +65,14 @@ def test_http_retries_without_think():
                                          None, None)
         return _Resp()
 
-    old = O.urllib.request.urlopen
-    O.urllib.request.urlopen = fake_urlopen
+    # Le transport est prompt_improve.http (ouvreur sans proxy): on remplace son open().
+    import prompt_improve
+    old = prompt_improve._OPENER.open
+    prompt_improve._OPENER.open = fake_urlopen
     try:
         out = O._ollama_http("/api/generate", {"model": "m", "prompt": "p", "think": False})
     finally:
-        O.urllib.request.urlopen = old
+        prompt_improve._OPENER.open = old
     assert out == {"response": "ok"}, out
     assert len(seen) == 2, seen
     assert "think" in seen[0] and "think" not in seen[1], seen
