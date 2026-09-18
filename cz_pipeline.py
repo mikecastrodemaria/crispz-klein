@@ -2939,19 +2939,38 @@ _LORA_ALT_SUFFIXES = ((".lora.down.weight", ".lora_A.weight"),
                       (".lora_up.weight", ".lora_B.weight"))
 
 
+# Nommage kohya ("lora_unet_double_blocks_0_...", "lora_te1_..."): diffusers le reconnait a
+# ses cles `.lora_down.weight` et le convertit lui-meme, alpha compris. Renommer ces cles
+# avant lui masquait le format: on le lui laisse.
+_KOHYA_PREFIXES = ("lora_unet_", "lora_te")
+
+
 def _lora_needs_normalizing(path):
-    """Le fichier contient-il des cles d'un dialecte non-PEFT ? Lecture d'en-tete seule."""
+    """Le fichier contient-il des cles d'un dialecte non-PEFT, ou des `.alpha` que diffusers
+    refuse tels quels ? Lecture d'en-tete seule. Le nommage kohya est laisse a diffusers."""
     try:
         h = _safetensors_header(path)
     except Exception:
         return False
-    return any(k.endswith(alt) for k in h if k != "__metadata__"
-               for alt, _ in _LORA_ALT_SUFFIXES)
+    keys = [k for k in h if k != "__metadata__"]
+    if any(k.startswith(_KOHYA_PREFIXES) for k in keys):
+        return False
+    if any(k.endswith(alt) for k in keys for alt, _ in _LORA_ALT_SUFFIXES):
+        return True
+    has_lora = any(".lora_" in k or ".lora." in k for k in keys)
+    return has_lora and any(k.endswith(".alpha") for k in keys)
 
 
 def _load_lora_normalized(path):
-    """State dict d'un LoRA avec les cles ramenees au dialecte PEFT. Renvoie
-    (state_dict, n_renommees)."""
+    """State dict d'un LoRA avec les cles ramenees au dialecte PEFT et les `.alpha`
+    integres aux poids. Renvoie (state_dict, n_renommees).
+
+    Un state dict n'a pas de place pour un alpha par module : diffusers refuse tout le
+    fichier ("Make sure all LoRA param names contain 'lora'") et rien n'est rendu. L'alpha
+    est une echelle alpha / rang sur la mise a jour (dW = alpha/r * B @ A) : on la
+    multiplie dans B, comme le convertisseur kohya de diffusers, puis on retire la cle.
+    Vu le 2026-09-18 sur RealSkin (4B et 9B) : noms diffusers `transformer.*`, matrices
+    `lora_down`/`lora_up`, un `alpha` par module (64, rang 64 : echelle 1)."""
     from safetensors.torch import load_file
     sd = load_file(path)
     out, n = {}, 0
@@ -2963,6 +2982,22 @@ def _load_lora_normalized(path):
                 n += 1
                 break
         out[nk] = v
+    folded, scales = 0, set()
+    for k in [k for k in out if k.endswith(".alpha")]:
+        base = k[: -len(".alpha")]
+        a_key, b_key = base + ".lora_A.weight", base + ".lora_B.weight"
+        alpha = out.pop(k)          # sans matrices en face, un alpha n'a aucun effet
+        if a_key in out and b_key in out:
+            rank = out[a_key].shape[0]
+            scale = float(alpha) / rank if rank else 1.0
+            if scale != 1.0:
+                b = out[b_key]
+                out[b_key] = (b.float() * scale).to(b.dtype)
+            folded += 1
+            scales.add(round(scale, 4))
+    if folded:
+        _log(f"LoRA: {folded} alpha(s) folded into the weights (alpha/rank = "
+             f"{', '.join(str(s) for s in sorted(scales))})")
     return out, n
 
 
@@ -3166,9 +3201,10 @@ def _sync_adapters(pipe, wanted, applied, force=False, tag="LoRA"):
                     warnings.filterwarnings("ignore", message=".*Already found a `peft_config`.*")
                     if _lora_needs_normalizing(p):
                         sd, nrn = _load_lora_normalized(p)
-                        _log(f"{tag}: {nrn} key(s) converted from lora.down/up to the "
-                             f"PEFT dialect (otherwise peft would apply this LoRA only "
-                             f"partially, silently)")
+                        if nrn:
+                            _log(f"{tag}: {nrn} key(s) converted from lora.down/up to the "
+                                 f"PEFT dialect (otherwise peft would apply this LoRA only "
+                                 f"partially, silently)")
                         pipe.load_lora_weights(sd, adapter_name=an)
                     else:
                         # Passer le dossier + weight_name (et non le chemin complet) : sinon

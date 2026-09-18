@@ -236,7 +236,48 @@ def test_the_variant_check_still_comes_first():
     print("OK test_the_variant_check_still_comes_first")
 
 
+def test_alpha_keys_are_folded_and_dropped():
+    """RealSkin (4B/9B), vu le 2026-09-18 : noms diffusers, matrices lora_down/lora_up et un
+    `.alpha` par module. Tel quel, diffusers refuse tout le fichier ("all LoRA param names
+    contain 'lora'") et rien n'est rendu. L'alpha est une echelle alpha / rang, a porter
+    dans B."""
+    base = "transformer.single_transformer_blocks.0.attn.to_out"
+    A, B = torch.randn(4, 8), torch.randn(6, 4)
+    for alpha, scale in ((4.0, 1.0), (2.0, 0.5)):
+        p = os.path.join(TMP, f"alpha_{int(alpha)}.safetensors")
+        save_file({base + ".lora_down.weight": A, base + ".lora_up.weight": B,
+                   base + ".alpha": torch.tensor(alpha)}, p)
+        assert P._lora_needs_normalizing(p) is True
+        sd, n = P._load_lora_normalized(p)
+        assert n == 2 and set(sd) == {base + ".lora_A.weight", base + ".lora_B.weight"}, list(sd)
+        assert all("lora" in k for k in sd)
+        assert torch.allclose(sd[base + ".lora_A.weight"], A)
+        assert torch.allclose(sd[base + ".lora_B.weight"], B * scale), alpha
+    # dialecte PEFT + alpha : diffusers le refuse tout autant
+    p = os.path.join(TMP, "peft_alpha.safetensors")
+    save_file({base + ".lora_A.weight": A, base + ".lora_B.weight": B,
+               base + ".alpha": torch.tensor(8.0)}, p)
+    assert P._lora_needs_normalizing(p) is True
+    sd, n = P._load_lora_normalized(p)
+    assert n == 0 and set(sd) == {base + ".lora_A.weight", base + ".lora_B.weight"}
+    assert torch.allclose(sd[base + ".lora_B.weight"], B * 2.0)
+    print("OK test_alpha_keys_are_folded_and_dropped")
+
+
+def test_kohya_naming_is_left_to_diffusers():
+    """Le nommage kohya (lora_unet_...) : diffusers le reconnait a ses `.lora_down.weight`
+    et le convertit alpha compris. Le renommer avant lui masquait le format."""
+    p = _write("kohya.safetensors", [
+        "lora_unet_double_blocks_0_img_attn_proj.lora_down.weight",
+        "lora_unet_double_blocks_0_img_attn_proj.lora_up.weight",
+        "lora_unet_double_blocks_0_img_attn_proj.alpha"])
+    assert P._lora_needs_normalizing(p) is False
+    print("OK test_kohya_naming_is_left_to_diffusers")
+
+
 if __name__ == "__main__":
+    test_alpha_keys_are_folded_and_dropped()
+    test_kohya_naming_is_left_to_diffusers()
     for fn in (test_detects_the_alternate_dialect, test_normalizes_a_mixed_file,
                test_edit_loras_sync_the_union_with_the_base_set,
                test_union_dedupes_on_path_first_weight_wins,

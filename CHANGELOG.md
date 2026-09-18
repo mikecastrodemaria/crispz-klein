@@ -52,6 +52,21 @@ Tests: `tests/test_prompt_variants.py` (the 23 reference tests),
 `tests/test_variants_wiring.py` (no-regression against the previous
 `_apply_wildcards`, and each wired path).
 
+## 1.36.2 — LoRAs that carry an alpha per module load again
+
+A LoRA saved with diffusers module names, `lora_down` / `lora_up` matrices and one
+`.alpha` per module (seen on 2026-09-18 on RealSkin, 4B and 9B) stopped the render:
+klein renamed the matrices to the PEFT dialect but left the alpha keys, and diffusers
+refused the whole file ("Make sure all LoRA param names contain 'lora'"), on the edit
+path too ("omni error: edit LoRA could not be applied"). Each alpha is now folded into
+its `lora_B` as the alpha / rank scale, the way diffusers' kohya converter does it, and
+the key removed (RealSkin: alpha 64 at rank 64, scale 1, so its weights are unchanged).
+Files in the kohya naming (`lora_unet_...`) are no longer renamed first: diffusers
+recognises them by their `.lora_down.weight` keys and converts them itself, alpha
+included, and the early rename hid that format. Checked on both RealSkin files: every
+key loads, and all their target modules (144 on the 9B, 100 on the 4B) exist in the
+transformer. Tests in `tests/test_lora_dialect.py`.
+
 ## 1.36.1 — Describe names the era, and Captionz's dataset caption joins the styles
 
 Same bench on 2026-09-12 (Agents-A1-4B and muse-glimmer, three images of known prompt, each
