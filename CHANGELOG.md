@@ -52,6 +52,24 @@ Tests: `tests/test_prompt_variants.py` (the 23 reference tests),
 `tests/test_variants_wiring.py` (no-regression against the previous
 `_apply_wildcards`, and each wired path).
 
+## 1.36.4 — An out-of-VRAM error in a batch no longer leaves the app stuck
+
+A Reference (Omni) batch with Upscale after generate and the detailer ran out of VRAM
+at the fourth image: the face and hand passes failed on `CUDA error: out of memory`,
+then every later render failed the same way until crispz-klein was restarted. Two
+causes. torch keeps freed VRAM in its cache and only gives it back when its own
+allocator fails, so the other consumers (the onnxruntime face detector, CUDA kernels
+loaded on first use) found the card full. And a pass that failed half way left weights
+on the GPU in `model` offload: 10.8 GB stayed stuck after the error.
+
+Now each generation, upscale and detailer pass that runs out of VRAM frees it (torch's
+cache, and in `model` offload the weights left on the GPU) and retries once. If the
+retry fails too, the VRAM is freed again before the error is reported, so the next
+render can run, and the report says what to lower. The detailer skips the remaining
+faces or hands instead of failing on each one. Between two images of a batch (Omni and
+txt2img), the cache goes back to the driver. The log gives the free VRAM after each
+release. Tests in `tests/test_vram_retry.py`.
+
 ## 1.36.3 — Reference (Omni) gets the batch, the detailer and Upscale after generate
 
 Reference (Omni) made one image and ignored three settings without a word: **Image
