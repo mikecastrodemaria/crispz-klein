@@ -51,7 +51,8 @@ On top of crispz's upscaler it adds:
 
 - **Text → Image** (`Flux2KleinPipeline`): generate from a prompt, with an optional
   **Upscale after generate** toggle (under the Generate button) that auto-chains each
-  image through the ESRGAN + refine pipeline — no manual step. CLI equivalent:
+  image — txt2img or Reference (Omni) — through the ESRGAN + refine pipeline, no manual
+  step. CLI equivalent:
   `--txt2img --upscale` (see README_CLI.md).
 - **Image → Upscale** (the crispz pipeline): Real-ESRGAN + diffusion refine, 4K tiling —
   plus one-click **🎲 Vary (subtle / strong)** (pure img2img re-roll of an input image,
@@ -338,7 +339,10 @@ second model to keep resident.
 The **Reference (Omni)** tab is **enabled out of the box**. Drop 1 to 4 reference
 images, write an instruction ("put the character from image 1 in the setting of
 image 2", "make it daytime"), Generate. Character identity is preserved while the
-scene changes.
+scene changes. It runs like txt2img: **Image number** makes a batch (each image with
+seed + i, variants and wildcards drawn per image), **Upscale after generate** chains
+each image through ESRGAN + refine, and the face / hand **detailer** runs on the final
+image.
 
 The upstream `zimage_omni_model` / `zimage_omni_base` config keys are **gone**:
 there is no separate editor to point at. Changing the checkpoint changes the editor

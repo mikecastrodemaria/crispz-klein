@@ -52,6 +52,19 @@ Tests: `tests/test_prompt_variants.py` (the 23 reference tests),
 `tests/test_variants_wiring.py` (no-regression against the previous
 `_apply_wildcards`, and each wired path).
 
+## 1.36.3 — Reference (Omni) gets the batch, the detailer and Upscale after generate
+
+Reference (Omni) made one image and ignored three settings without a word: **Image
+number** (always one image), the face / hand **detailer**, and **Upscale after
+generate**. It now runs like txt2img: the batch replays the composition with seed + i
+(variants, wildcards and random style drawn per image); with the toggle on, each image
+goes through the Upscale pipeline (ESRGAN + refine, with the Upscale / img2img
+settings), saved as `omni_upscaled` with the `omni+upscale` mode in its metadata, and
+`save_pre_upscale` keeps the image from before; then the face and hand detailers run on
+the final image. An upscale that fails keeps the Omni image and says why; an Omni error
+in the middle of a batch keeps the images already made. The Omni tab's **Edit** button
+and the job queue go through the same path. Tests in `tests/test_variants_wiring.py`.
+
 ## 1.36.2 — LoRAs that carry an alpha per module load again
 
 A LoRA saved with diffusers module names, `lora_down` / `lora_up` matrices and one

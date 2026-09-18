@@ -282,16 +282,24 @@ def test_protocol_resolves_seed_before_expanding():
 
 # ---------------------------------------------------------- UI Generate ---
 def _ui_call(prompt, negative, n, seed, use_input=False, input_mode="Input image",
-             ref1=None):
+             ref1=None, auto_upscale=False, detailer=False):
+    """cz_ui._ui_generate avec des reglages minimaux. Le detaileur (visages, mains) est
+    coupe sauf si `detailer` : il chargerait un vrai detecteur."""
     import cz_ui
     import cz_pipeline
-    return cz_ui._ui_generate(
-        prompt, negative, [], False, use_input, None, input_mode,
-        ref1, None, None, None, False, None,
-        64, 64, 4, n, seed, cz_pipeline.GUIDANCE, cz_pipeline.OFFLOAD_MODE,
-        "esrgan.pth", False, False, False, 2.0, 0.3, 8,
-        512, 64, 0, 64, "display", "out", "png", [],
-        progress=lambda f, desc=None: None)
+    import cz_detailer
+    det = (cz_detailer.DETAILER_ENABLED, cz_detailer.HAND_ENABLED)
+    cz_detailer.DETAILER_ENABLED = cz_detailer.HAND_ENABLED = bool(detailer)
+    try:
+        return cz_ui._ui_generate(
+            prompt, negative, [], False, use_input, None, input_mode,
+            ref1, None, None, None, False, None,
+            64, 64, 4, n, seed, cz_pipeline.GUIDANCE, cz_pipeline.OFFLOAD_MODE,
+            "esrgan.pth", False, False, False, 2.0, 0.3, 8,
+            512, 64, 0, 64, "display", "out", "png", [],
+            auto_upscale=auto_upscale, progress=lambda f, desc=None: None)
+    finally:
+        cz_detailer.DETAILER_ENABLED, cz_detailer.HAND_ENABLED = det
 
 
 def _ui_txt2img(prompt, negative, n, seed):
@@ -356,6 +364,76 @@ def test_ui_omni_resolves_seed_and_expands():
     assert got["seed"] >= 0 and got["seed"] == cz_pipeline._LAST_SEED, got
     assert got["prompt"] == "a red car" and got["negative"] == "blurry", got
     assert got["refs"] == 1
+
+
+def test_ui_omni_chains_the_upscale_when_asked():
+    """« Upscale after generate » etait ignore en Reference (Omni), sans un mot : l'image
+    Omni doit passer par l'Upscale comme une image txt2img, et seulement si la case l'est."""
+    import cz_ui
+    import cz_pipeline
+    if not (cz_pipeline.OMNI_MODEL or "").strip():
+        print("SKIP test_ui_omni_chains_the_upscale_when_asked (no omni model)")
+        return
+    seen = []
+
+    def fake_generate_omni(refs, prompt, negative, width, height, steps, seed, **kw):
+        return Image.new("RGB", (32, 32))
+
+    def fake_process_one(img, esrgan_model, factor, denoise, steps, prompt, seed, *a, **kw):
+        seen.append((img.size, prompt, seed))
+        return Image.new("RGB", (64, 64)), {"esrgan": 0.0, "refine": 0.0}
+
+    real = (cz_ui.generate_omni, cz_ui.process_one)
+    cz_ui.generate_omni, cz_ui.process_one = fake_generate_omni, fake_process_one
+    omni = dict(use_input=True, input_mode="Reference (Omni)", ref1=Image.new("RGB", (32, 32)))
+    try:
+        with _wildcards({}):
+            _g, rep_on, _h, _h2 = _ui_call("a car", "", 1, 7, auto_upscale=True, **omni)
+            _g, rep_off, _h, _h2 = _ui_call("a car", "", 1, 7, auto_upscale=False, **omni)
+    finally:
+        cz_ui.generate_omni, cz_ui.process_one = real
+    assert seen == [((32, 32), "a car", 7)], seen      # une fois : pas quand la case est decochee
+    assert "omni+upscale" in rep_on and "64x64" in rep_on, rep_on
+    assert "omni+upscale" not in rep_off and "32x32" in rep_off, rep_off
+
+
+def test_ui_omni_runs_the_batch_and_the_detailer():
+    """Omni ne faisait qu'une image et sautait le detaileur, sans un mot : le lot
+    « Image number » rejoue la composition avec seed+i (variantes tirees par image), et le
+    detaileur passe sur chaque image finale."""
+    import cz_ui
+    import cz_pipeline
+    import cz_detailer
+    if not (cz_pipeline.OMNI_MODEL or "").strip():
+        print("SKIP test_ui_omni_runs_the_batch_and_the_detailer (no omni model)")
+        return
+    calls, faces, hands = [], [], []
+
+    def fake_generate_omni(refs, prompt, negative, width, height, steps, seed, **kw):
+        calls.append((prompt, seed))
+        return Image.new("RGB", (32, 32))
+
+    def fake_faces(img, prompt, seed, steps=None, progress=None):
+        faces.append(seed)
+        return img, 1
+
+    def fake_hands(img, prompt, seed, steps=None, progress=None):
+        hands.append(seed)
+        return img, 1
+
+    real = (cz_ui.generate_omni, cz_detailer.detail_faces, cz_detailer.detail_hands)
+    cz_ui.generate_omni, cz_detailer.detail_faces, cz_detailer.detail_hands = (
+        fake_generate_omni, fake_faces, fake_hands)
+    try:
+        with _wildcards({}, in_order=True):
+            gal, rep, _h, _h2 = _ui_call("a {red|blue} car", "", 3, 10, use_input=True,
+                                         input_mode="Reference (Omni)",
+                                         ref1=Image.new("RGB", (32, 32)), detailer=True)
+    finally:
+        cz_ui.generate_omni, cz_detailer.detail_faces, cz_detailer.detail_hands = real
+    assert calls == [("a red car", 10), ("a blue car", 11), ("a red car", 12)], calls
+    assert faces == [10, 11, 12] and hands == [10, 11, 12], (faces, hands)
+    assert len(gal) == 3 and "omni x3" in rep, rep
 
 
 # ------------------------------------------------------------------- CLI ---
