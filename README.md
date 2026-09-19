@@ -541,6 +541,88 @@ fidelity to the swapped pixels) — 0.5–0.7 suits a 128 px swap. GFPGAN ignore
 > applied to an existing image. The swap here transfers the *exact* face as a
 > post-process. Different trade-offs, not a better/worse pair.
 
+### Where the swap runs, and what it replaces
+
+The swap is the **last** step of a render. The order is: generation (txt2img, img2img
+or Reference (Omni)) → **Upscale after generate** → face / hand **detailer** → **face
+swap**. It runs on every image of a batch, and each swapped image is saved as its own
+file, tagged `faceswap`. Two consequences:
+
+- **Turn the face detailer off when the swap is on.** The detailer re-renders faces at
+  a larger size, then the swap replaces them anyway: the time is spent for nothing, and
+  an identity the detailer drifted is not the one you asked for.
+- **Every face found in the result is replaced** by the source face (the largest face
+  of the source image). On a group shot, everyone gets the same face.
+
+### One set of models for every crispz app
+
+The five files are the same in every app of the family (about 1.43 GB in total):
+`inswapper_128.onnx` (the swap), `codeformer.onnx` and `gfpgan_1.4.onnx` (restore),
+`dfl_xseg.onnx` (occlusion mask), `bisenet_resnet_34.onnx` (face-region mask). If
+another crispz app already has them, either copy its `faceswap/` folder into this one,
+or point `faceswap_model_path`, `faceswap_codeformer_path`, `faceswap_restore_path`,
+`faceswap_occluder_path` and `faceswap_parser_path` in `config.txt` to that folder, so a
+single copy serves every app. A missing auxiliary model is fetched once from the
+facefusion repository on Hugging Face; `inswapper_128.onnx` is never downloaded unless
+you set `faceswap_model_url`.
+
+## Try-on and casting: Reference (Omni) + face swap
+
+Reference (Omni) can dress a person with a garment from a product shot, and even
+change the head, in one edit. The face swap then puts the exact face back. What
+follows was measured on 2026-09-19 on FLUX.2-klein-9B (`model` offload, 4 steps, two
+seeds per setting).
+
+**The method.** Put the person in **Ref 1**: that image sets the pose, the framing,
+the background and the light, and the output keeps its aspect ratio. Put the garment
+in **Ref 2** (and a second view of it in **Ref 3** if you have one), the head to use in
+the next slot. In the prompt, name each image by its number **and** say what to take
+from it: "the woman in image 1 keeps her exact pose..., she now wears the dress from
+images 2 and 3: <short description of the dress>... her head is the head of the woman
+in image 4: <hair, eyes>". Numbers count **filled** slots only: fill them in order, an
+empty Ref 2 turns Ref 3 into "image 2". A short description of the garment (colour,
+pattern, collar, sleeves, hem) anchors the transfer. For a sheer garment, say what is
+worn under it ("worn over a matching slip"), or the render may show the body through
+it.
+
+**What the consistency LoRA does.** Without one, the edit drifts: the subject comes
+back slightly zoomed or shifted, and the face is redrawn. The **Consistence-Edit**
+presets (4B, and **Consistence-Edit 9B** for the 9B) hold the framing and the features
+of image 1, and they did **not** block the change of clothing, even at 1.0:
+
+| Test | No LoRA | Consistence-Edit 9B 0.3 | 0.6 | 1.0 |
+|---|---|---|---|---|
+| Hoodie on a waist-up portrait: head SSIM vs image 1 | 0.91 | 0.95 | 0.97 | 0.98 |
+| Designer dress on a full-body studio photo: face SSIM vs image 1 | 0.47-0.55 | 0.49-0.58 | 0.52-0.61 | 0.58-0.63 |
+
+The garment came through in every setting: print and lettering legible, colours,
+collar, ruffles, bows, even a small doll sewn at the hip of a complex dress. Two
+community consistency LoRAs for the 9B, set in a regular LoRA slot at 0.6, behaved like
+the preset at 0.8-1.0; on a dancing pose, one of them kept the movement best. **Start
+with the preset at 0.6 and go up to 1.0** when the framing must not move; lower it if an
+edit refuses to take.
+
+**The limit is the face in a full-body shot.** Omni renders at about one megapixel
+(832x1248 for a 2:3 image) whatever the size of image 1: in a full-body shot the face
+is about 100 px high, and klein redraws it younger and rounder. The LoRA helps a little
+(table above), it does not fix it. The **face swap** does: with the portrait as the
+source, the face comes back to the person's features while keeping the expression of
+the render. Enlarging image 1 does not help (the output stays at one megapixel):
+**Upscale after generate** gives the final definition.
+
+**Recipe for a casting** (person, garment in two views, another person's head):
+
+1. Model **klein-9B**, tab **Reference (Omni)**: Ref 1 = full-body photo, Ref 2 =
+   garment front, Ref 3 = garment side, Ref 4 = portrait.
+2. **Edit LoRA presets**: Consistence-Edit 9B at 0.6 to 1.0 (or a consistency LoRA of
+   your own in a LoRA slot).
+3. Prompt as above, keeping "the joyful expression of image 1" (or whatever the pose
+   calls for) so the swapped face does not look pasted on a different mood.
+4. **Image number** 4, then keep the best.
+5. **Upscale after generate** on: ESRGAN x2, Refine off.
+6. Face **detailer off**; **Apply face swap to result** on, with the portrait as the
+   source face.
+
 ## Text -> Image
 
 ```bash
