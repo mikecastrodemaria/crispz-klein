@@ -46,6 +46,23 @@ EDIT_LORA_SPECS = {
         "weight": 0.6,          # l'auteur conseille 0.5-0.7
         "local_names": ["f2k_4B_consist_20260314.safetensors",
                         "consistence_edit_flux2_klein_4b.safetensors"]},
+    "Consistence-Edit 9B": {
+        # Meme auteur, meme depot, version 9B la plus recente: CivitAI models/1939453
+        # "Klein 9B lcs 20260416" (fichier du 2026-04-15, methode LCS: latent corrompu
+        # conscient du cadre + perte sur les statistiques de couleur). Rang 64, 288
+        # tenseurs bf16 (~332 Mo), dimension cachee 4096 = FLUX.2-klein-9B. Le fichier
+        # melange lui aussi deux dialectes (224 lora_A/B + 64 lora.down/up), ramenes au
+        # dialecte PEFT par cz_pipeline._load_lora_normalized: 144 modules du transformer
+        # 9B apres conversion diffusers, aucune cle perdue (verifie le 2026-09-19).
+        # Sur le 4B, la garde de variante le refuse avec une phrase (_lora_unsupported).
+        "repo": "lrzjason/Consistance_Edit_Lora",
+        "weights": "f2k_9B_lcs_consist_20260415.safetensors",
+        "adapter_name": "consistence-edit-9b",
+        "prompt": ("Add realistic details to the image. Restore high frequency details "
+                   "from the corrupted image."),
+        "inputs": 1, "base": "klein-9B",
+        "weight": 0.6,          # l'auteur conseille 0.5-0.7
+        "local_names": ["f2k_9B_lcs_consist_20260415.safetensors"]},
 }
 
 # --- Catalogue Qwen-Image-Edit de l'amont, conserve comme REFERENCE DE MERGE.

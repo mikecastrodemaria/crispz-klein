@@ -52,6 +52,22 @@ Tests: `tests/test_prompt_variants.py` (the 23 reference tests),
 `tests/test_variants_wiring.py` (no-regression against the previous
 `_apply_wildcards`, and each wired path).
 
+## 1.36.5 — Consistence-Edit for the 9B, and presets set their own weight
+
+A second edit-LoRA preset, **Consistence-Edit 9B**: the 9B version of the consistency
+LoRA already shipped for the 4B, from the same author and Hugging Face repo
+(`f2k_9B_lcs_consist_20260415.safetensors`, "Klein 9B lcs 20260416" on CivitAI, 0.5-0.7
+advised). A copy of the file in one of your LoRA folders is used as is, without a
+download. Checked on its header and through the loader: it targets the 9B (hidden size
+4096), its two key dialects are merged into 144 transformer modules, none lost; on the
+4B the variant guard refuses it with one sentence, as it refuses the 4B preset on the
+9B.
+
+Picking a preset now sets the **Edit LoRA weight** slider to the preset's advised value
+(0.6 for both): the slider stayed at 1.0, above the author's range. The README section
+on edit presets described the upstream Qwen catalogue; it now describes klein's. Tests
+in `tests/test_edit_lora_presets.py`.
+
 ## 1.36.4 — An out-of-VRAM error in a batch no longer leaves the app stuck
 
 A Reference (Omni) batch with Upscale after generate and the detailer ran out of VRAM

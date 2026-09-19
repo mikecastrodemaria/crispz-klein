@@ -36,8 +36,9 @@ reference in 3.0 s. crispz-qwen-edit needs two 20B models for the same features.
 **Two things to know before using it.** klein-4B is step-wise distilled, so
 **negative prompts and the guidance slider have no effect** — verified, renders at
 guidance 1.0 / 4.0 / 8.0 are bit-identical (`tests/test_klein_guidance.py`). And the
-edit-LoRA catalogue holds exactly one verified preset (`Consistence-Edit`): the
-Qwen-Image-Edit presets of the upstream fork are incompatible with FLUX.2. Both are announced honestly in the CLI protocol
+edit-LoRA catalogue holds two verified presets (`Consistence-Edit` for the 4B,
+`Consistence-Edit 9B` for the 9B): the Qwen-Image-Edit presets of the upstream fork
+are incompatible with FLUX.2. Both are announced honestly in the CLI protocol
 (`supports.negative: false`, `edit_loras: []`). Full detail in [FORK.md](FORK.md).
 
 > ⚠️ **4B by default, 9B on request.** `FLUX.2-klein-4B` is Apache 2.0 and is what
@@ -355,7 +356,7 @@ Models → Omni is kept for API compatibility with the family and is a no-op.
 |---|---|
 | **ControlNet** | no FLUX.2 Klein ControlNet model published yet |
 | **IP-Adapter** (what Fooocus uses for image prompts on SDXL) | none — and unnecessary, multi-reference is native |
-| **Edit-task LoRAs** | one shipped (`Consistence-Edit`, detail restoration, Apache-2.0). The Qwen-Image-Edit presets of the upstream fork cannot load here and are not advertised; `tools/check_klein_extras.py` watches for new releases |
+| **Edit-task LoRAs** | two shipped (`Consistence-Edit` 4B and `Consistence-Edit 9B`, consistency and detail restoration, Apache-2.0). The Qwen-Image-Edit presets of the upstream fork cannot load here and are not advertised; `tools/check_klein_extras.py` watches for new releases |
 
 ## Job queue
 
@@ -865,18 +866,24 @@ changing a weight is instant, swapping LoRA files takes ~1 s. Selecting LoRAs au
 merged **keywords / trigger words** (read from the file metadata); **Add to prompt**
 appends them.
 
-### Edit LoRA presets (Qwen-Image-Edit task LoRAs)
+### Edit LoRA presets
 
-The edit pipe (Reference (Omni) tab, protocol op `edit`) has its **own** LoRA set:
-the slots above only reach the txt2img/img2img transformer. Under the reference
-images, the **Edit LoRA** dropdown lists the 19 task LoRAs of
-[Qwen-Image-Edit-2511-LoRAs-Fast-Lazy-Load](https://github.com/PRITHIVSAKTHIUR/Qwen-Image-Edit-2511-LoRAs-Fast-Lazy-Load)
-(Photo-to-Anime, Any-Light, Light-Migration, Upscaler 2K, Multiple-Angles,
-Style-Transfer, Polaroid, Pixar-3D, noir comic, Studio-DeLight...). `⬇` = fetched
-from Hugging Face on first selection into `<loras_dir>/_hf-edit/<adapter>.safetensors`
-(then it is an ordinary LoRA file), `✓` = already on disk. They have **no trigger
-word**: the instruction is the prompt (**Use example prompt** fills the upstream
-example). Presets marked "2 images" want the image to edit in **Ref 1** and the
+On klein the edit (Reference (Omni) tab, protocol op `edit`) runs on the **same**
+pipeline as txt2img: the LoRA slots above apply to edits too, and the **Edit LoRA
+presets** dropdown under the reference images adds its preset on top. The 19
+Qwen-Image-Edit task LoRAs of the upstream fork cannot load on FLUX.2 and are not
+listed. Two presets are, both from
+[`lrzjason/Consistance_Edit_Lora`](https://huggingface.co/lrzjason/Consistance_Edit_Lora)
+(Apache-2.0): **Consistence-Edit** for the 4B and **Consistence-Edit 9B** for the 9B.
+They keep the edited image consistent with the input (colors, framing, fine detail);
+more weight means more consistency and less room for the edit. Picking a preset sets
+the weight slider to its advised value (0.6, author: 0.5-0.7). A preset made for the
+other model is refused with one sentence, not forty lines of `size mismatch`. `⬇` =
+fetched from Hugging Face on first selection into
+`<loras_dir>/_hf-edit/<adapter>.safetensors`, `✓` = already on disk, including a copy
+of the same file in one of your LoRA folders (e.g. downloaded from CivitAI). They have
+**no trigger word**: the instruction is the prompt (**Use example prompt** fills the
+author's wording). Presets marked "2 images" want the image to edit in **Ref 1** and the
 reference (light, style) in **Ref 2**. The **Edit LoRAs** checkbox in Models → LoRA
 switches the whole edit set on/off without losing the selection. `config.txt`
 `edit_loras` adds/replaces/removes presets, `edit_loras_dir` moves the folder.

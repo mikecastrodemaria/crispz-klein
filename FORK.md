@@ -119,11 +119,12 @@ les annonçait : un appelant demandant `Manga-Tone` aurait planté. `EDIT_LORA_S
 `SPEED_SPECS` ont donc été vidés — **le catalogue amont est conservé juste en dessous,
 commenté, comme référence de merge**.
 
-Le catalogue contient depuis **une** entrée, vérifiée chargeable et testée sur GPU :
+Le catalogue contient depuis **deux** entrées, vérifiées chargeables :
 
 | Preset | Source | Licence | Poids conseillé |
 |---|---|---|---|
 | `Consistence-Edit` | [`lrzjason/Consistance_Edit_Lora`](https://huggingface.co/lrzjason/Consistance_Edit_Lora) (`f2k_4B_consist_20260314.safetensors`) | Apache-2.0 | 0.6 (auteur : 0.5–0.7) |
+| `Consistence-Edit 9B` | même dépôt (`f2k_9B_lcs_consist_20260415.safetensors`, « Klein 9B lcs 20260416 » sur CivitAI) | Apache-2.0 | 0.6 (auteur : 0.5–0.7) |
 
 Rang 128, 200 tenseurs bf16 (~368 Mo), cible explicitement `FLUX.2-klein-4B`. Même
 auteur que `Anything2Real` du catalogue amont. C'est un LoRA de **restauration de

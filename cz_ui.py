@@ -1046,6 +1046,20 @@ def _ui_edit_lora_apply(label, weight, progress=gr.Progress()):
                      value=cz_edit_loras.status_label(name)), note
 
 
+def _ui_edit_lora_pick(label, weight, progress=gr.Progress()):
+    """Choix dans le dropdown: pose le preset a SON poids conseille et y place le curseur.
+    Le curseur restait a 1.0, alors que Consistence-Edit se regle a 0.6 (auteur: 0.5-0.7).
+    Le curseur reste libre ensuite (.release -> _ui_edit_lora_apply).
+    Renvoie (update dropdown, statut, update curseur)."""
+    import cz_edit_loras
+    s = cz_edit_loras.spec(cz_edit_loras.strip_label(label))
+    preset_w = s.get("weight") if s else None
+    if preset_w is not None:
+        weight = float(preset_w)
+    dd, note = _ui_edit_lora_apply(label, weight, progress=progress)
+    return dd, note, (gr.update(value=weight) if preset_w is not None else gr.update())
+
+
 def _ui_edit_lora_prompt(label, current):
     """Bouton 'Use example prompt': met l'instruction d'exemple du preset dans le prompt
     (le prompt courant est garde s'il n'y a pas de preset)."""
@@ -4050,8 +4064,8 @@ def build_ui():
                                         label="Edit LoRA presets",
                                         info="✓ = on disk, ⬇ = fetched from Hugging Face on first "
                                              "use. Only LoRAs verified to LOAD on FLUX.2 Klein are "
-                                             "listed - the Qwen-Image-Edit presets of the upstream "
-                                             "forks cannot. No trigger word: describe the edit.")
+                                             "listed; each targets one model (4B or 9B, in its "
+                                             "name or its note). No trigger word: describe the edit.")
                                     with gr.Row():
                                         edit_lora_prompt_btn = gr.Button("Use example prompt", size="sm")
                                         edit_lora_refresh_btn = gr.Button("Refresh presets", size="sm")
@@ -4677,8 +4691,8 @@ def build_ui():
         omni_check_btn2.click(_ui_check_omni, None, [omni_status2])
         # Presets d'edition: .input (action utilisateur) et non .change, car la
         # reponse met a jour le dropdown lui-meme (libelle ⬇ -> ✓ apres telechargement).
-        edit_lora_dd.input(_ui_edit_lora_apply, [edit_lora_dd, edit_lora_w],
-                           [edit_lora_dd, edit_lora_status])
+        edit_lora_dd.input(_ui_edit_lora_pick, [edit_lora_dd, edit_lora_w],
+                           [edit_lora_dd, edit_lora_status, edit_lora_w])
         edit_lora_w.release(_ui_edit_lora_apply, [edit_lora_dd, edit_lora_w],
                             [edit_lora_dd, edit_lora_status])
         edit_lora_prompt_btn.click(_ui_edit_lora_prompt, [edit_lora_dd, prompt], [prompt])
