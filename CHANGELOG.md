@@ -73,6 +73,28 @@ Tests: `tests/test_prompt_variants.py` (the 23 reference tests),
 `tests/test_variants_wiring.py` (no-regression against the previous
 `_apply_wildcards`, and each wired path).
 
+## 1.36.6 — A DoRA LoRA no longer takes the whole session down
+
+Picking two DoRA LoRAs as edit LoRAs ended the session: `edit LoRA hot-swap failed
+(Cannot copy out of meta tensor)`, then **every** later render, edit or txt2img, failed
+on `Cannot generate a cpu tensor from a generator of type cuda` until crispz-klein was
+restarted. Three causes, three fixes.
+
+diffusers creates the adapter layers on the `meta` device and copies the weights in
+afterwards. It also drops the `dora_scale` keys of a DoRA checkpoint, so some parameters
+never receive data and the first move raises. LoRAs are now loaded with
+`low_cpu_mem_usage=False`: the layers hold real tensors, and a missing key keeps its
+initial value.
+
+diffusers removes the offload hooks before loading a LoRA and puts them back after. When
+the load failed in between, nobody put them back: the pipeline stayed on the CPU, its
+execution device became `cpu`, and every render after that failed, whatever it had to do
+with that LoRA. A failed load now restores the offload in place, and every pipeline call
+checks first (`restore_offload`), so a pipeline left on the CPU repairs itself instead of
+asking for a restart.
+
+Tests in `tests/test_lora_offload.py`.
+
 ## 1.36.5 — Consistence-Edit for the 9B, and presets set their own weight
 
 A second edit-LoRA preset, **Consistence-Edit 9B**: the 9B version of the consistency

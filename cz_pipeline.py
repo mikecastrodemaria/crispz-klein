@@ -567,6 +567,10 @@ def _qwen_call(pipe, **kw):
         if _neg and "prompt_embeds" in _neg:
             kw["negative_prompt_embeds"] = _neg["prompt_embeds"]
 
+    # Filet: un pipe laisse sur le CPU par un echec anterieur (LoRA, offload) ferait
+    # echouer CET appel sur "Cannot generate a cpu tensor from a generator of type cuda".
+    restore_offload(pipe, "an earlier failure")
+
     def _run():
         # Ventilation encode / diffusion / decode, en debug seul. Un total ("50s") ne dit
         # pas quoi optimiser: sur un base offloade, deplacer l'encodeur Qwen3 puis le
@@ -2660,6 +2664,59 @@ def release_vram(offload=False, why=""):
         _dbg(f"release_vram: {e}")
 
 
+def _load_lora(pipe, *args, **kwargs):
+    """pipe.load_lora_weights avec des tenseurs REELS (low_cpu_mem_usage=False).
+
+    Une build diffusers/peft qui ne connait pas ce parametre le refuse par TypeError:
+    on rappelle alors sans lui plutot que de faire echouer la pose (le defaut y cree les
+    couches sur 'meta' -- cf. _sync_adapters)."""
+    try:
+        return pipe.load_lora_weights(*args, low_cpu_mem_usage=False, **kwargs)
+    except TypeError as e:
+        if "low_cpu_mem_usage" not in str(e):
+            raise
+        _dbg(f"load_lora_weights without low_cpu_mem_usage ({e})")
+        return pipe.load_lora_weights(*args, **kwargs)
+
+
+def _offload_hooks(pipe):
+    """Nombre de hooks d'offload 'model' poses par diffusers sur ce pipe (0 = aucun)."""
+    return len(getattr(pipe, "_all_hooks", None) or [])
+
+
+def restore_offload(pipe, why=""):
+    """Remet le pipe dans son etat d'offload EFFECTIF s'il a ete laisse sur le CPU.
+
+    diffusers RETIRE les hooks d'offload avant de poser une LoRA et les remet apres.
+    Quand le chargement echoue entre les deux, personne ne les remet: le pipe reste sur
+    le CPU, son `_execution_device` passe a cpu, et TOUS les rendus suivants echouent
+    sur "Cannot generate a cpu tensor from a generator of type cuda" -- jusqu'au
+    redemarrage de l'app. Releve le 2026-09-23 avec deux LoRA DoRA posees en edition.
+    Renvoie True si l'etat a ete retabli."""
+    if DEVICE != "cuda" or pipe is None:
+        return False
+    try:
+        dev = pipe._execution_device
+    except Exception:
+        return False
+    if str(getattr(dev, "type", dev)) == "cuda":
+        return False
+    off = _effective_offload()
+    try:
+        if off == "model":
+            pipe.enable_model_cpu_offload()
+        elif off == "sequential":
+            pipe.enable_sequential_cpu_offload()
+        else:
+            pipe.to(DEVICE)
+    except Exception as e:
+        _log(f"pipeline left on the CPU and NOT restored ({e}): restart crispz-klein")
+        return False
+    _log(f"pipeline was left on the CPU{' after ' + why if why else ''} -> offload "
+         f"'{off}' restored in place (no reload)")
+    return True
+
+
 def retry_on_oom(what, fn, *args, **kwargs):
     """Appelle fn(*args, **kwargs); sur un manque de VRAM, rend la VRAM (cache de torch,
     modeles restes sur le GPU) et retente UNE fois. Un second echec rend encore la VRAM
@@ -3349,9 +3406,15 @@ def _sync_adapters(pipe, wanted, applied, force=False, tag="LoRA"):
     Les pipes derives (from_pipe) partagent ce transformer -> ils suivent automatiquement.
     Renvoie (ok, applied): ok=False si echec (le caller decide: reload complet pour le
     base, erreur franche pour l'edition), applied = nouveau jeu pose ([] si echec)."""
+    # low_cpu_mem_usage=False a CHAQUE chargement (cf. _load_lora): le
+    # defaut de diffusers cree les couches de l'adaptateur sur 'meta' puis y copie les
+    # poids. Une DoRA dont diffusers filtre les cles 'dora_scale' laisse alors des
+    # parametres sans donnees, et le premier deplacement leve "Cannot copy out of meta
+    # tensor". Avec des tenseurs reels, une cle manquante garde sa valeur d'init.
     wanted = list(wanted)
     if not force and applied == wanted:
         return True, applied
+    had_hooks = _offload_hooks(pipe)
     old_paths = [p for p, _ in applied]
     new_paths = [p for p, _ in wanted]
     try:
@@ -3389,13 +3452,13 @@ def _sync_adapters(pipe, wanted, applied, force=False, tag="LoRA"):
                             _log(f"{tag}: {nrn} key(s) converted from lora.down/up to the "
                                  f"PEFT dialect (otherwise peft would apply this LoRA only "
                                  f"partially, silently)")
-                        pipe.load_lora_weights(sd, adapter_name=an)
+                        _load_lora(pipe, sd, adapter_name=an)
                     else:
                         # Passer le dossier + weight_name (et non le chemin complet) : sinon
                         # diffusers en mode offline (HF_HUB_OFFLINE) refuse "must specify a
                         # weight_name". Marche aussi online et avec un fichier local direct.
-                        pipe.load_lora_weights(os.path.dirname(p) or ".",
-                                               weight_name=os.path.basename(p), adapter_name=an)
+                        _load_lora(pipe, os.path.dirname(p) or ".",
+                                   weight_name=os.path.basename(p), adapter_name=an)
                 names.append(an)
                 weights.append(float(w))
             else:
@@ -3407,6 +3470,11 @@ def _sync_adapters(pipe, wanted, applied, force=False, tag="LoRA"):
         return True, wanted
     except Exception as e:
         _log(f"{tag} hot-swap failed ({e})")
+        # diffusers a retire les hooks d'offload avant de charger et n'a pas eu le temps
+        # de les remettre: sans ca, le pipe reste sur le CPU et TOUS les rendus suivants
+        # echouent, y compris ceux qui n'ont rien a voir avec cette LoRA.
+        if had_hooks and not _offload_hooks(pipe):
+            restore_offload(pipe, f"a failed {tag} load")
         return False, []
 
 
