@@ -36,6 +36,13 @@ def step(name, fn):
 
 
 def main():
+    # A GPU end-to-end run, not a unit test: it loads the real 4B checkpoint and
+    # renders five 1024x1024 images through the four protocol paths. Without CUDA
+    # there is nothing to exercise - a CI runner would pull ~15 GB of weights only
+    # to crawl on the CPU, which is what pushed klein's job past its 30 min limit.
+    if not torch.cuda.is_available():
+        print("SKIP test_klein_e2e (needs CUDA and the real 4B checkpoint)")
+        return 0
     ok = True
     print(f"base repo: {p.BASE_REPO}"
           f"{'  (KLEIN_E2E_MODEL)' if os.environ.get('KLEIN_E2E_MODEL') else ''}")
