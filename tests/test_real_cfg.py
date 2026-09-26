@@ -162,7 +162,7 @@ def test_the_announcement_is_made_once_not_per_image():
     finally:
         P._log = real_log
         _restore(old)
-    said = [m for m in logged if "VRAIE CFG" in m]
+    said = [m for m in logged if "REAL CFG" in m]
     assert len(said) == 1, logged
     assert not any("transmise" in m for m in logged), logged
     print("OK test_the_announcement_is_made_once_not_per_image")

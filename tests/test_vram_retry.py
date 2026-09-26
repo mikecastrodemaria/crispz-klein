@@ -222,7 +222,7 @@ def test_ui_omni_reports_what_to_lower_when_the_retry_fails():
 
     gal, rep, releases = _omni(fake_generate_omni)
     assert not gal, gal
-    assert "Omni error" in rep and "VRAM saturee" in rep and "redemarre" in rep, rep
+    assert "Omni error" in rep and "VRAM full" in rep and "restart" in rep, rep
     assert releases == [True, True], releases
 
 

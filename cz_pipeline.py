@@ -413,7 +413,7 @@ def _cfg(negative=None, guidance=None):
     cz_protocol (supports.negative = False + warning sur un spec qui en porte un)
     -- regle maison: degradation annoncee, jamais silencieuse."""
     if negative:
-        _dbg("negative prompt ignore: klein est distille (ni CFG ni negative_prompt)")
+        _dbg("negative prompt ignored: klein is distilled (no CFG, no negative_prompt)")
     return {}
 
 
@@ -533,18 +533,18 @@ def _qwen_call(pipe, **kw):
             said = (str(ZIMAGE_TRANSFORMER), want)
             if said not in _CFG_REAL_SAID:
                 _CFG_REAL_SAID.add(said)
-                _log(f"guidance {want:g} appliquee en VRAIE CFG sur "
-                     f"{os.path.basename(str(ZIMAGE_TRANSFORMER))}: deux passes par "
-                     f"step (avec et sans prompt), donc ~2x le temps de diffusion. "
-                     f"C'est le regime d'un checkpoint 'undistilled'. Sur un checkpoint "
-                     f"DISTILLE, une guidance > 1 degrade l'image: remets-la a 1.0.")
+                _log(f"guidance {want:g} applied as REAL CFG on "
+                     f"{os.path.basename(str(ZIMAGE_TRANSFORMER))}: two passes per "
+                     f"step (with and without the prompt), so ~2x the diffusion time. "
+                     f"That is how an 'undistilled' checkpoint runs. On a DISTILLED "
+                     f"checkpoint, a guidance > 1 degrades the image: set it back to 1.0.")
             kw["guidance_scale"] = want
         else:
             if distilled and want > 1.0 and want not in _CFG_IGNORED_SAID:
                 _CFG_IGNORED_SAID.add(want)
-                _log(f"guidance {want:g} ignoree: {BASE_REPO} est distille et la CFG y "
-                     f"est inerte (mesuree bit-a-bit identique de 1.0 a 8.0). Elle "
-                     f"s'applique en revanche sur un checkpoint single-file charge.")
+                _log(f"guidance {want:g} ignored: {BASE_REPO} is distilled and CFG is inert "
+                     f"there (measured bit-for-bit identical from 1.0 to 8.0). It does "
+                     f"apply on a single-file checkpoint, though.")
             kw["guidance_scale"] = 1.0 if distilled else want
     if "strength" in kw and kw.get("image") is not None and "mask_image" not in kw:
         img = kw["image"]
@@ -605,7 +605,7 @@ def _qwen_call(pipe, **kw):
             if any(k in kw for k in ("true_cfg_scale", "negative_prompt", "callback_on_step_end")):
                 for k in ("true_cfg_scale", "negative_prompt", "callback_on_step_end"):
                     kw.pop(k, None)
-                _dbg(f"klein call: retry sans kwargs optionnels ({e})")
+                _dbg(f"klein call: retrying without the optional kwargs ({e})")
                 return pipe(**kw)
             raise
 
@@ -613,8 +613,8 @@ def _qwen_call(pipe, **kw):
         return _run()
     reg = getattr(pipe, "register_to_config", None)
     if reg is None:
-        _log("vraie CFG impossible: ce pipeline n'expose pas register_to_config -- "
-             "diffusers ignorera la guidance")
+        _log("real CFG impossible: this pipeline has no register_to_config -- "
+             "diffusers will ignore the guidance")
         return _run()
     was = bool(getattr(pipe.config, "is_distilled", True))
     reg(is_distilled=False)
@@ -671,7 +671,7 @@ def _apply_sampler(pipe):
     try:
         sched = _build_scheduler(SAMPLER, SCHEDULE, _BASE_SCHED_CONFIG)
         if not _scheduler_accepts_sigmas(sched):
-            raise ValueError(f"{type(sched).__name__} n'accepte pas les sigmas custom de FLUX.2")
+            raise ValueError(f"{type(sched).__name__} does not accept the custom sigmas of FLUX.2")
         pipe.scheduler = sched
         _dbg(f"sampler applied: {SAMPLER}/{SCHEDULE} -> {type(pipe.scheduler).__name__}")
     except Exception as e:
@@ -2467,8 +2467,8 @@ def set_omni_model(repo):
     global OMNI_MODEL
     OMNI_MODEL = BASE_REPO
     if (repo or "").strip() and (repo or "").strip() != BASE_REPO:
-        _log(f"Omni model ignore ({repo}): klein edite avec le modele de base "
-             f"({BASE_REPO}). Change le checkpoint pour changer l'editeur.")
+        _log(f"Omni model ignored ({repo}): klein edits with the base model "
+             f"({BASE_REPO}). Change the checkpoint to change the editor.")
 
 
 def list_edit_models():
@@ -3796,7 +3796,7 @@ def get_pipe(kind="img2img"):
         return base
     twin = "inpaint" if kind == "img2img" else "img2img"
     if twin in _DERIVED:
-        _dbg(f"get_pipe('{kind}'): reuse '{twin}' (meme pipeline Flux2KleinInpaint)")
+        _dbg(f"get_pipe('{kind}'): reuse '{twin}' (same Flux2KleinInpaint pipeline)")
         _DERIVED[kind] = _DERIVED[twin]
         return _DERIVED[kind]
     _log(f"deriving {kind} pipeline (shared weights, no extra VRAM)")
@@ -4314,7 +4314,7 @@ def _refine_tiled(pipe, image, denoise, steps, prompt, seed, tile, overlap):
     # Anti-duplication 1: prompt vide par tuile (le prompt global decrit toute la compo).
     prompt = _tile_prompt(prompt)
     if not (prompt or "").strip():
-        _log("refine tiled: prompt vide par tuile (anti-duplication; regle refine_tile_prompt).")
+        _log("refine tiled: empty prompt per tile (anti-duplication; rule refine_tile_prompt).")
     # Anti-duplication 2 (filet): a fort denoise chaque tuile peut encore deriver.
     denoise = float(denoise)
     if _TILE_DENOISE_CAP > 0 and denoise > _TILE_DENOISE_CAP:
@@ -4418,7 +4418,7 @@ def process_one(image, esrgan_model, factor, denoise, steps, prompt, seed, tile,
         if rt <= 0 and max(rw, rh) > _AUTO_TILE_ABOVE:
             rt = _pick_refine_tile(rw, rh, int(refine_overlap) or 64)
             _log(f"refine: image {rw}x{rh} > {_AUTO_TILE_ABOVE}px -> auto-tiling (tile {rt}) "
-                 "pour eviter le pic VRAM (regles: auto_refine_tile_above, auto_refine_tile)")
+                 "to avoid the VRAM spike (rules: auto_refine_tile_above, auto_refine_tile)")
         if rt > 0:
             out = _refine_tiled(pipe, img, denoise, steps, prompt, seed,
                                 rt, int(refine_overlap) or 64)
