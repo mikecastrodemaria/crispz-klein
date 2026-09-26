@@ -29,6 +29,48 @@ TMP = os.path.join(os.environ.get("TEMP") or "/tmp", "cz_preset_switch")
 os.makedirs(TMP, exist_ok=True)
 
 
+def _stub_dims(fn):
+    """Run fn with the 4B/9B hidden dims stubbed, so no network and no gated-repo
+    token are needed.
+
+    Seeding _BASE_DIM_CACHE is not enough: set_zimage_model purges the entry of the
+    repo it switches TO, on purpose (choosing a repo counts as "retry" once its
+    licence is accepted). The dim was therefore re-read from transformer/config.json
+    on the Hub, and the gated 9B answers 401 to anyone who has not accepted it - the
+    filter then turns OFF and the test failed on the CI runner."""
+    real = P._base_hidden_dim
+    dims = {U.KLEIN_BASE_4B: 3072, U.KLEIN_BASE_9B: 4096}
+
+    def fake(base=None):
+        return dims.get((base or P.BASE_REPO or "").strip())
+    P._base_hidden_dim = fake
+    try:
+        return fn()
+    finally:
+        P._base_hidden_dim = real
+
+
+def _stub_dims(fn):
+    """Run fn with the 4B/9B hidden dims stubbed, so no network and no gated-repo
+    token are needed.
+
+    Seeding _BASE_DIM_CACHE is not enough: set_zimage_model purges the entry of the
+    repo it switches TO, on purpose (choosing a repo counts as "retry" once its
+    licence is accepted). The dim was therefore re-read from transformer/config.json
+    on the Hub, and the gated 9B answers 401 to anyone who has not accepted it - the
+    filter then turns OFF and the test failed on the CI runner."""
+    real = P._base_hidden_dim
+    dims = {U.KLEIN_BASE_4B: 3072, U.KLEIN_BASE_9B: 4096}
+
+    def fake(base=None):
+        return dims.get((base or P.BASE_REPO or "").strip())
+    P._base_hidden_dim = fake
+    try:
+        return fn()
+    finally:
+        P._base_hidden_dim = real
+
+
 def _ckpt(name, dim):
     """Faux transformer FLUX.2: seul l'en-tete est lu, les poids sont vides."""
     p = os.path.join(TMP, name)
@@ -187,7 +229,7 @@ def test_a_preset_switches_its_own_base_repo():
             assert saved.get(P.CFG_MODEL_KEY) == U.KLEIN_BASE_9B, saved
         finally:
             U._save_prefs_keys = real_save
-    _with_lib(check)
+    _with_lib(lambda: _stub_dims(check))
     print("OK test_a_preset_switches_its_own_base_repo")
 
 
@@ -278,7 +320,7 @@ def test_base_swap_refreshes_the_checkpoint_list():
             assert "Non-Commercial" not in out[0], out[0]
         finally:
             U._save_prefs_keys = real_save
-    _with_lib(check)
+    _with_lib(lambda: _stub_dims(check))
     print("OK test_base_swap_refreshes_the_checkpoint_list")
 
 

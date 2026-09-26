@@ -22,6 +22,12 @@ SCALES = [1.0, 4.0, 8.0]
 
 
 def main():
+    # A GPU bench, not a unit test: it downloads the real 4B checkpoint and renders
+    # three 1024x1024 images. Without CUDA there is nothing to measure, and running
+    # it on a CI runner would just download ~15 GB to fail on .to("cuda").
+    if not torch.cuda.is_available():
+        print("SKIP test_klein_guidance (needs CUDA and the real 4B checkpoint)")
+        return 0
     print(f"loading {REPO} ...", flush=True)
     t0 = time.time()
     pipe = Flux2KleinPipeline.from_pretrained(REPO, torch_dtype=torch.bfloat16)

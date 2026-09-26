@@ -14,6 +14,7 @@ No torch run, no GPU: the pipeline calls are stubbed.
 
 Run:  .venv/Scripts/python tests/test_vram_retry.py
 """
+import importlib.util
 import os
 import sys
 
@@ -23,6 +24,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from PIL import Image  # noqa: E402
 
 OOM = "CUDA error: out of memory\nCUDA kernel errors might be asynchronously reported"
+
+# cz_detailer._feather_mask needs cv2, which arrives with the FaceSwap deps
+# (insightface) and is absent from an install without them, and from the CI runner.
+_HAS_CV2 = importlib.util.find_spec("cv2") is not None
 
 
 class _Releases:
@@ -148,6 +153,9 @@ def _detail(refine):
 
 
 def test_detailer_retries_a_pass_that_ran_out_of_vram():
+    if not _HAS_CV2:
+        print("SKIP test_detailer_retries_a_pass_that_ran_out_of_vram (no cv2)")
+        return
     tries = []
 
     def refine(pipe, work, denoise, steps, prompt, seed):
@@ -163,6 +171,9 @@ def test_detailer_retries_a_pass_that_ran_out_of_vram():
 
 
 def test_detailer_skips_the_other_regions_when_still_out_of_vram():
+    if not _HAS_CV2:
+        print("SKIP test_detailer_skips_the_other_regions_when_still_out_of_vram (no cv2)")
+        return
     tries = []
 
     def refine(pipe, work, denoise, steps, prompt, seed):
