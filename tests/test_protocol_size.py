@@ -1,10 +1,10 @@
-"""La taille demandee doit atteindre la route omni, pour TOUS les ops.
+"""The size asked for must reach the omni route, for EVERY op.
 
-Regression (heritee de crispz-qwen-edit): `size_explicit` n'etait calcule que dans
-la branche op == "edit". Or un `gen` AVEC refs passe par la MEME route omni --
-il repartait donc sans le flag, et generate_omni conservait les dimensions de la
-REFERENCE. Une case 800x1312 rendue avec une reference 1280x832 ressortait en
-paysage, puis se faisait recadrer a la composition (titre coupe sur une couverture).
+Regression (inherited from crispz-qwen-edit): `size_explicit` was only computed in
+the op == "edit" branch. But a `gen` WITH refs takes the SAME omni route -- it left
+without the flag, and generate_omni kept the dimensions of the REFERENCE. An
+800x1312 panel rendered from a 1280x832 reference came back in landscape, then got
+cropped at layout time (a cover with its title cut off).
 """
 import os
 import sys
@@ -28,13 +28,13 @@ def test_size_explicit_on_gen_with_refs(tmpref=None):
     Image.new("RGB", (1280, 832)).save(ref)
 
     out, _ = P.validate_spec(_spec(refs=[ref], width=800, height=1312))
-    assert out["size_explicit"] is True, "gen + refs doit transmettre la taille"
+    assert out["size_explicit"] is True, "gen + refs must pass the size along"
     assert (out["width"], out["height"]) == (800, 1312)
 
-    # sans width/height -> defaut 1024, et le flag doit rester faux pour que
-    # l'edition garde le comportement historique (dimensions de l'entree)
+    # without width/height -> default 1024, and the flag must stay false so
+    # the edit keeps its historical behaviour (the input's dimensions)
     out, _ = P.validate_spec(_spec(refs=[ref]))
-    assert out["size_explicit"] is False, "sans taille demandee, pas de forcage"
+    assert out["size_explicit"] is False, "no size asked for, nothing forced"
     print("OK test_size_explicit_on_gen_with_refs")
 
 
@@ -47,7 +47,7 @@ def test_size_explicit_without_refs():
 
 
 def test_one_dimension_only_is_not_explicit():
-    """width sans height (ou l'inverse) = taille incomplete -> on ne force pas."""
+    """width without height (or the reverse) = an incomplete size -> nothing forced."""
     out, _ = P.validate_spec(_spec(width=800))
     assert out["size_explicit"] is False, out["size_explicit"]
     print("OK test_one_dimension_only_is_not_explicit")
