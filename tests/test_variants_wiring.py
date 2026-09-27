@@ -283,8 +283,8 @@ def test_protocol_resolves_seed_before_expanding():
 # ---------------------------------------------------------- UI Generate ---
 def _ui_call(prompt, negative, n, seed, use_input=False, input_mode="Input image",
              ref1=None, auto_upscale=False, detailer=False):
-    """cz_ui._ui_generate avec des reglages minimaux. Le detaileur (visages, mains) est
-    coupe sauf si `detailer` : il chargerait un vrai detecteur."""
+    """cz_ui._ui_generate with minimal settings. The detailer (faces, hands) is
+    switched off unless `detailer`: it would load a real detector."""
     import cz_ui
     import cz_pipeline
     import cz_detailer
@@ -367,8 +367,8 @@ def test_ui_omni_resolves_seed_and_expands():
 
 
 def test_ui_omni_chains_the_upscale_when_asked():
-    """« Upscale after generate » etait ignore en Reference (Omni), sans un mot : l'image
-    Omni doit passer par l'Upscale comme une image txt2img, et seulement si la case l'est."""
+    """"Upscale after generate" was ignored in Reference (Omni), without a word: the Omni
+    image must go through the Upscale like a txt2img image, and only when the box is ticked."""
     import cz_ui
     import cz_pipeline
     if not (cz_pipeline.OMNI_MODEL or "").strip():
@@ -392,15 +392,15 @@ def test_ui_omni_chains_the_upscale_when_asked():
             _g, rep_off, _h, _h2 = _ui_call("a car", "", 1, 7, auto_upscale=False, **omni)
     finally:
         cz_ui.generate_omni, cz_ui.process_one = real
-    assert seen == [((32, 32), "a car", 7)], seen      # une fois : pas quand la case est decochee
+    assert seen == [((32, 32), "a car", 7)], seen      # once: not when the box is unticked
     assert "omni+upscale" in rep_on and "64x64" in rep_on, rep_on
     assert "omni+upscale" not in rep_off and "32x32" in rep_off, rep_off
 
 
 def test_ui_omni_runs_the_batch_and_the_detailer():
-    """Omni ne faisait qu'une image et sautait le detaileur, sans un mot : le lot
-    « Image number » rejoue la composition avec seed+i (variantes tirees par image), et le
-    detaileur passe sur chaque image finale."""
+    """Omni made only one image and skipped the detailer, without a word: the
+    "Image number" batch replays the composition with seed+i (the variants drawn per image),
+    and the detailer goes over every final image."""
     import cz_ui
     import cz_pipeline
     import cz_detailer

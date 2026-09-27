@@ -1,26 +1,27 @@
-"""Elagage de l'encodeur texte, et le budget VRAM qui en depend.
+"""The pruning of the text encoder, and the VRAM budget that depends on it.
 
-FLUX.2 ne lit pas la sortie du LLM: il empile les etats caches de trois couches
-INTERMEDIAIRES (d'ou context_embedder large de 3 x hidden). Tout ce qui vient apres la
-derniere couche lue -- huit blocs d'un Qwen3-8B et une projection sur 152 000 jetons --
-est calcule a chaque image puis jete. Comme hidden_states[k] est la sortie APRES k
-blocs, les retirer est EXACT, pas approche: verifie bit a bit sur le modele reel
-(15.3 -> 11.2 Go, encodage 5.0 -> 3.2 s, torch.equal vrai sur les trois couches lues).
+FLUX.2 does not read the LLM's output: it stacks the hidden states of three INTERMEDIATE
+layers (hence a context_embedder 3 x hidden wide). Everything that comes after the last
+layer read -- eight blocks of a Qwen3-8B and a projection onto 152,000 tokens -- is
+computed for every image then thrown away. Since hidden_states[k] is the output AFTER k
+blocks, removing them is EXACT, not approximate: checked bit for bit on the real model
+(15.3 -> 11.2 GB, encoding 5.0 -> 3.2 s, torch.equal true on the three layers read).
 
-Ces tests verrouillent les deux pieges rencontres en l'ecrivant:
+These tests lock down the two traps met while writing it:
 
-1. LE NOM DE LA METHODE. La premiere version cherchait `_get_qwen_prompt_embeds`;
-   diffusers l'appelle ici `_get_qwen3_prompt_embeds`. L'elagage ne se declenchait donc
-   jamais -- et il le DISAIT, mais personne ne lit un log quand un chiffre plus bas est
-   deja faux. On cherche desormais la methode par son PARAMETRE.
+1. THE METHOD'S NAME. The first version looked for `_get_qwen_prompt_embeds`;
+   diffusers calls it `_get_qwen3_prompt_embeds` here. So the pruning never fired
+   -- and it SAID so, but nobody reads a log when a lower figure is already there and
+   wrong. We now look for the method by its PARAMETER.
 
-2. LE BUDGET SUR UNE INTENTION. Pire consequence du point 1: le budget VRAM defalquait
-   les 4 Go de l'elagage sans verifier qu'il avait eu lieu. Mesure: 29.7 Go annonces,
-   32.3 Go reellement residents, 0.0 Go libre -- et sous Windows ca ne plante meme pas,
-   ca deborde en memoire partagee et le rendu s'effondre en silence. Le budget ne suit
-   donc plus que le drapeau _ENCODER_TRIMMED, jamais TRIM_TEXT_ENCODER.
+2. A BUDGET ON AN INTENTION. The worst consequence of point 1: the VRAM budget deducted
+   the pruning's 4 GB without checking that it had happened. Measured: 29.7 GB announced,
+   32.3 GB really resident, 0.0 GB free -- and under Windows it does not even crash, it
+   spills into shared memory and the render collapses in silence. So the budget now
+   follows the _ENCODER_TRIMMED flag only, never TRIM_TEXT_ENCODER.
 
 Run:  .venv/Scripts/python tests/test_encoder_trim.py
+
 """
 import os
 import sys
@@ -33,7 +34,7 @@ import cz_pipeline as P
 
 
 class _FakeEncoder(torch.nn.Module):
-    """Le strict necessaire: .model.layers, .lm_head, des parametres a compter."""
+    """The bare minimum: .model.layers, .lm_head, some parameters to count."""
 
     def __init__(self, n=36, width=8):
         super().__init__()
@@ -44,7 +45,7 @@ class _FakeEncoder(torch.nn.Module):
 
 
 def _fake_pipe(layers=(9, 18, 27), n=36, method="_get_qwen3_prompt_embeds"):
-    """Un pipe dont la CLASSE porte la methode, comme chez diffusers."""
+    """A pipe whose CLASS carries the method, as at diffusers."""
     def _embeds(prompt, tokenizer, text_encoder, hidden_states_layers=layers):
         return None
 
@@ -55,7 +56,7 @@ def _fake_pipe(layers=(9, 18, 27), n=36, method="_get_qwen3_prompt_embeds"):
 
 
 def test_the_read_layers_are_found_by_parameter_not_by_name():
-    """Le piege exact: la methode s'appelle _get_qwen3_..., pas _get_qwen_...."""
+    """The exact trap: the method is called _get_qwen3_..., not _get_qwen_...."""
     for name in ("_get_qwen3_prompt_embeds", "_get_qwen_prompt_embeds",
                  "_get_some_future_name_embeds"):
         p = _fake_pipe(method=name)
@@ -64,8 +65,8 @@ def test_the_read_layers_are_found_by_parameter_not_by_name():
 
 
 def test_an_unreadable_signature_trims_nothing():
-    """Sans information fiable, on garde TOUT: des embeddings faux en silence seraient
-    infiniment pires que quelques gigaoctets gaspilles."""
+    """With no reliable information, we keep EVERYTHING: silently wrong embeddings would
+    be infinitely worse than a few wasted gigabytes."""
     cls = type("NoSuchMethod", (), {})
     p = cls()
     p.text_encoder = _FakeEncoder()
@@ -81,7 +82,7 @@ def test_trimming_keeps_exactly_the_blocks_that_are_read():
     kept = list(p.text_encoder.model.layers)[:28]
     P._trim_text_encoder(p)
     assert len(p.text_encoder.model.layers) == 28, len(p.text_encoder.model.layers)
-    # ce sont bien les MEMES objets, dans l'ordre: on coupe, on ne reconstruit pas
+    # they really are the SAME objects, in order: we cut, we do not rebuild
     assert all(a is b for a, b in zip(p.text_encoder.model.layers, kept))
     assert isinstance(p.text_encoder.lm_head, torch.nn.Identity)
     assert P._ENCODER_TRIMMED is True
@@ -97,7 +98,7 @@ def test_trimming_twice_changes_nothing():
 
 
 def test_the_budget_follows_the_deed_not_the_intent():
-    """Le bug qui a coute une carte pleine: 4 Go defalques d'un elagage jamais fait."""
+    """The bug that cost a full card: 4 GB deducted from a pruning never done."""
     old_repo, old_flag = P.BASE_REPO, P._ENCODER_TRIMMED
     P.BASE_REPO = "test-only/FLUX.2-klein-9B"
     P._BASE_DIM_CACHE[P.BASE_REPO] = 4096
@@ -115,9 +116,9 @@ def test_the_budget_follows_the_deed_not_the_intent():
 
 
 def test_a_trimmed_9B_still_gets_the_offload_it_needs():
-    """29.7 Go de poids sur une carte de 31.8 ne laissent pas de quoi diffuser. La
-    marge est ABSOLUE: un pourcentage se resserre sur les petites cartes, alors que le
-    contexte CUDA et les activations coutent la meme chose partout."""
+    """29.7 GB of weights on a 31.8 card leave nothing to diffuse with. The margin is
+    ABSOLUTE: a percentage tightens on the small cards, whereas the CUDA context and the
+    activations cost the same everywhere."""
     old = (P.BASE_REPO, P._ENCODER_TRIMMED, P.OFFLOAD_MODE, P.DEVICE, P._total_vram_gb)
     P.BASE_REPO = "test-only/FLUX.2-klein-9B"
     P._BASE_DIM_CACHE[P.BASE_REPO] = 4096

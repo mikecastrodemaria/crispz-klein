@@ -1,22 +1,23 @@
-"""Vraie CFG pour un checkpoint single-file: le drapeau `is_distilled` du pipeline.
+"""A real CFG for a single-file checkpoint: the pipeline's `is_distilled` flag.
 
-Le pipeline FLUX.2 klein decide seul s'il fait la passe sans prompt:
+The FLUX.2 klein pipeline decides on its own whether it does the prompt-free pass:
 
     do_classifier_free_guidance = guidance_scale > 1 and not config.is_distilled
 
-et `config.is_distilled` vient du DEPOT DE BASE (True pour klein 4B et 9B). Un
-single-file ne remplace que le transformer: la config reste "distillee". L'app
-transmettait donc la guidance d'un checkpoint 'undistilled' en ecrivant "guidance 3.5
-transmise", et diffusers repondait a la ligne suivante "Guidance scale 3.5 is ignored
-for step-wise distilled models". Releve sur le banc du 2026-09-10: kleinForeskin a 28
-steps coutait 0.6 s/step, exactement comme un distille, au lieu du double.
+and `config.is_distilled` comes from the BASE REPO (True for klein 4B and 9B). A
+single-file only replaces the transformer: the config stays "distilled". So the app
+passed on the guidance of an 'undistilled' checkpoint while writing "guidance 3.5
+passed on", and diffusers answered on the next line "Guidance scale 3.5 is ignored
+for step-wise distilled models". Caught on the 2026-09-10 bench: kleinForeskin at 28
+steps cost 0.6 s/step, exactly like a distilled one, instead of double.
 
-Ces tests verrouillent: le drapeau est leve PENDANT l'appel, retabli APRES (meme sur
-erreur -- le pipeline est partage, un drapeau oublie ferait passer tous les appels
-suivants en CFG), jamais touche sur le repo de base, et le negatif vide que le
-pipeline impose est mis en cache comme le positif.
+These tests lock it down: the flag is raised DURING the call, restored AFTER (even on
+an error -- the pipeline is shared, a forgotten flag would put all the following calls
+into CFG), never touched on the base repo, and the empty negative the
+pipeline imposes is cached like the positive one.
 
 Run:  .venv/Scripts/python tests/test_real_cfg.py
+
 """
 import os
 import sys
@@ -29,13 +30,13 @@ import cz_pipeline as P
 
 
 class _Cfg(dict):
-    """Acces par attribut, comme la FrozenDict de diffusers."""
+    """Attribute access, like diffusers' FrozenDict."""
     __getattr__ = dict.get
 
 
 class FakePipe:
-    """Juste ce que _qwen_call touche: config, register_to_config, __call__ -- et
-    l'API d'encodage quand on veut exercer le cache d'embeddings."""
+    """Just what _qwen_call touches: config, register_to_config, __call__ -- and
+    the encoding API when the embeddings cache is to be exercised."""
 
     def __init__(self, with_encoder=False, fail=False):
         self.config = _Cfg(is_distilled=True)
@@ -78,8 +79,8 @@ def _restore(old):
 
 
 def test_the_base_repo_keeps_guidance_inert():
-    """Sur le repo de base on SAIT que la CFG est inerte (mesure bit a bit): 1.0, et
-    le drapeau n'est pas touche."""
+    """On the base repo we KNOW the CFG is inert (measured bit for bit): 1.0, and
+    the flag is not touched."""
     old = _state(GUIDANCE=3.5)
     try:
         pipe = FakePipe()
@@ -106,8 +107,8 @@ def test_a_single_file_gets_real_cfg_during_the_call_only():
 
 
 def test_the_flag_is_restored_even_when_the_call_fails():
-    """Le pipeline est partage: un drapeau laisse leve ferait passer TOUS les appels
-    suivants en CFG, repo de base compris."""
+    """The pipeline is shared: a flag left raised would put ALL the following calls
+    into CFG, the base repo included."""
     old = _state(GUIDANCE=3.5, ZIMAGE_TRANSFORMER="kleinForeskin.safetensors")
     try:
         pipe = FakePipe(fail=True)
@@ -135,8 +136,8 @@ def test_guidance_one_changes_nothing():
 
 
 def test_the_empty_negative_is_encoded_once():
-    """Sans negatif fourni, le pipeline encoderait un "" a CHAQUE appel -- sous
-    offload, l'encodeur remonterait sur le GPU a chaque image."""
+    """With no negative supplied, the pipeline would encode a "" on EVERY call -- under
+    offload, the encoder would come back up onto the GPU for every image."""
     old = _state(GUIDANCE=3.5, ZIMAGE_TRANSFORMER="kleinForeskin.safetensors")
     try:
         pipe = FakePipe(with_encoder=True)
@@ -150,7 +151,7 @@ def test_the_empty_negative_is_encoded_once():
 
 
 def test_the_announcement_is_made_once_not_per_image():
-    """L'ancien message sortait a CHAQUE appel (trois fois par modele dans le banc)."""
+    """The old message came out on EVERY call (three times per model in the bench)."""
     old = _state(GUIDANCE=3.5, ZIMAGE_TRANSFORMER="kleinForeskin.safetensors")
     logged = []
     real_log = P._log

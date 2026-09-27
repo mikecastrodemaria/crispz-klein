@@ -1,16 +1,17 @@
-"""Pre-remplir le cache de dequant ne depend pas du repo de base courant.
+"""Pre-filling the dequant cache does not depend on the current base repo.
 
-La clef du cache est le FICHIER (chemin+taille+mtime): un checkpoint 4B se
-dequantifie exactement pareil que la base soit 4B ou 9B. Le refus de variante est un
-refus de CHARGEMENT, pas de conversion -- l'ecarter du pre-remplissage faisait
-repayer les minutes de conversion a chaque bascule 4B <-> 9B, ce que ce cache existe
-precisement pour eviter.
+The cache key is the FILE (path+size+mtime): a 4B checkpoint dequantises
+exactly the same whether the base is a 4B or a 9B. The variant refusal is a
+LOADING refusal, not a conversion one -- discarding it from the pre-filling made one
+pay the minutes of conversion again on every 4B <-> 9B switch, which is precisely what
+this cache exists to avoid.
 
-tools/rebuild_dequant_cache.py neutralise donc ce refus-la, et lui SEUL, en comparant
-la raison rendue par _safetensors_unsupported a celle de _flux2_variant_mismatch.
-Ces tests verrouillent cette egalite: si la raison de variante etait un jour composee
-avec autre chose, le pre-remplissage se remettrait a sauter des fichiers valides --
-ou, pire, cesserait de reconnaitre un vrai refus et convertirait des LoRA.
+So tools/rebuild_dequant_cache.py neutralises that refusal, and it ALONE, by comparing
+the reason _safetensors_unsupported returns with _flux2_variant_mismatch's.
+These tests lock that equality down: should the variant reason one day be composed
+with something else, the pre-filling would start skipping valid files again --
+or, worse, would stop recognising a real refusal and would convert LoRAs.
+
 """
 import os
 import sys
@@ -25,8 +26,8 @@ import cz_pipeline as P
 TMP = os.path.join(os.environ.get("TEMP") or "/tmp", "cz_precache")
 os.makedirs(TMP, exist_ok=True)
 
-# Base 9B fixee a la main: _BASE_DIM_CACHE court-circuite la lecture de
-# transformer/config.json -> le test ne depend ni du reseau ni de la config locale.
+# A 9B base fixed by hand: _BASE_DIM_CACHE short-circuits the reading of
+# transformer/config.json -> the test depends neither on the network nor on the local config.
 BASE_9B = "test-only/FLUX.2-klein-9B"
 P._BASE_DIM_CACHE[BASE_9B] = 4096
 P.BASE_REPO = BASE_9B
@@ -35,7 +36,7 @@ FP8 = torch.float8_e4m3fn
 
 
 def _fp8_ckpt(name, dim):
-    """Faux transformer FP8 'scaled' facon ComfyUI: seul l'en-tete compte."""
+    """A fake 'scaled' FP8 transformer, ComfyUI-style: only the header counts."""
     p = os.path.join(TMP, name)
     save_file({
         # signature de dimension: out == dim * 6 sur la modulation double-flux
@@ -48,7 +49,7 @@ def _fp8_ckpt(name, dim):
 
 
 def _lora(name):
-    """Une LoRA egaree dans le dossier des checkpoints: vrai refus, toutes bases."""
+    """A LoRA gone astray in the checkpoints folder: a real refusal, on every base."""
     p = os.path.join(TMP, name)
     save_file({f"lora_unet_blocks_{i}.lora_down.weight": torch.zeros(2, 2)
                for i in range(6)}, p)
@@ -56,15 +57,15 @@ def _lora(name):
 
 
 def test_a_4B_checkpoint_is_refused_only_for_its_variant():
-    """La base est en 9B: un 4B est refuse au chargement, et c'est TOUT ce qu'on
-    lui reproche -- donc le pre-remplissage peut le convertir quand meme."""
+    """The base is a 9B: a 4B is refused at load time, and that is ALL we hold
+    against it -- so the pre-filling can convert it anyway."""
     p = _fp8_ckpt("precache_4B.safetensors", 3072)
     dim = P._flux2_hidden_dim(p)
     assert dim == 3072, dim
     why = P._safetensors_unsupported(p)
     assert why, "un 4B doit etre refuse tant que la base tourne en 9B"
     assert why == P._flux2_variant_mismatch(dim), why
-    # ... et il reste parfaitement dequantifiable.
+    # ... and it stays perfectly dequantisable.
     assert P._safetensors_dequant(p) == "FP8 scaled", P._safetensors_dequant(p)
 
 
@@ -76,8 +77,8 @@ def test_a_9B_checkpoint_is_not_refused_at_all():
 
 
 def test_a_real_refusal_is_never_mistaken_for_a_variant_mismatch():
-    """Le filet du pre-remplissage: une LoRA n'a pas de signature de dimension, donc
-    _flux2_variant_mismatch rend None, donc l'egalite ne peut pas la blanchir."""
+    """The pre-filling's safety net: a LoRA has no dimension signature, so
+    _flux2_variant_mismatch returns None, so the equality cannot clear it."""
     p = _lora("precache_lora.safetensors")
     why = P._safetensors_unsupported(p)
     assert why and "LoRA" in why, why

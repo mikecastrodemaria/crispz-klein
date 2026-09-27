@@ -1,21 +1,22 @@
-"""Metadonnees de generation: elles doivent decrire l'image, pas l'intention.
+"""The generation metadata: it must describe the image, not the intention.
 
-Trois trous, tous du meme genre -- une image qu'on ne peut pas reproduire depuis son
-propre fichier, ou pire, qui affirme quelque chose de faux:
+Three holes, all of the same kind -- an image that cannot be reproduced from its own
+file, or worse, that asserts something false:
 
-1. LES LoRA D'EDITION n'y etaient pas du tout. Le jeu d'edition est SEPARE du jeu de
-   base et c'est lui qui faconne le resultat d'une edition; le chemin omni ne passait
-   que `extra={"refs": n}`.
-2. LA LISTE ETAIT CELLE DES LoRA DEMANDEES, pas des LoRA posees. Depuis qu'une LoRA
-   peut etre ecartee en route (mauvaise variante 4B/9B, LyCORIS non supporte, build
-   quantifie, fichier absent), signer une image avec une LoRA qu'elle ne porte pas
-   devient facile. Et une LoKr, fusionnee dans les poids, n'apparait dans AUCUN
-   adaptateur PEFT: sans _APPLIED_LOKRS elle disparaissait des metadonnees.
-3. LE REPO DE BASE manquait des qu'un single-file etait choisi. Un single-file ne
-   remplace que le transformer -- VAE, encodeur texte et config d'archi viennent du
-   repo -- et 4B/9B ne sont pas interchangeables.
+1. THE EDIT LoRAs were not in there at all. The edit set is SEPARATE from the base set
+   and it is the one that shapes an edit's result; the omni path only passed
+   `extra={"refs": n}`.
+2. THE LIST WAS THE ONE OF THE LoRAs ASKED FOR, not of the LoRAs applied. Now that a LoRA
+   can be discarded along the way (the wrong 4B/9B variant, an unsupported LyCORIS, a
+   quantised build, a missing file), signing an image with a LoRA it does not carry
+   becomes easy. And a LoKr, merged into the weights, appears in NO PEFT
+   adapter: without _APPLIED_LOKRS it disappeared from the metadata.
+3. THE BASE REPO was missing as soon as a single-file was chosen. A single-file only
+   replaces the transformer -- the VAE, the text encoder and the architecture config come
+   from the repo -- and the 4B/9B are not interchangeable.
 
 Run:  .venv/Scripts/python tests/test_gen_meta.py
+
 """
 import os
 import sys
@@ -30,7 +31,7 @@ CKPT = r"F:\models\rayKlein9bBFS_fp8V2.safetensors"
 
 
 def _state(**kw):
-    """Pose l'etat modele lu par _gen_meta et rend de quoi le restaurer."""
+    """Sets the model state _gen_meta reads and returns what is needed to restore it."""
     old = {k: getattr(P, k) for k in
            ("BASE_REPO", "ZIMAGE_TRANSFORMER", "LORAS", "_APPLIED_LORAS",
             "_APPLIED_LOKRS", "_APPLIED_EDIT_LORAS", "EDIT_SPEED")}
@@ -58,7 +59,7 @@ def test_a_lokr_appears_although_it_is_no_adapter():
 
 
 def test_a_refused_lora_is_not_claimed_as_applied():
-    """Le mensonge tranquille: demandee, ecartee, et pourtant listee."""
+    """The quiet lie: asked for, discarded, and listed all the same."""
     old = _state(LORAS=[("/l/ok.safetensors", 0.8), ("/l/refused.safetensors", 0.5)],
                  _APPLIED_LORAS=[("/l/ok.safetensors", 0.8)])
     try:
@@ -83,8 +84,8 @@ def test_edit_loras_are_recorded_on_an_edit():
 
 
 def test_edit_loras_do_not_leak_into_a_txt2img():
-    """_APPLIED_EDIT_LORAS survit a l'edition qui l'a pose: sans garde de mode, le
-    txt2img suivant revendiquerait un jeu qu'il n'a jamais porte."""
+    """_APPLIED_EDIT_LORAS survives the edit that set it: with no mode guard, the next
+    txt2img would claim a set it never carried."""
     old = _state(_APPLIED_EDIT_LORAS=[("/e/consistence-edit.safetensors", 0.6)],
                  EDIT_SPEED={"name": "Rapid 8-step", "steps": 8})
     try:
@@ -119,7 +120,7 @@ def test_the_base_repo_alone_needs_no_second_line():
 
 
 def test_the_a1111_chunk_carries_them_too():
-    """C'est la ligne que lisent Civitai et les visionneuses A1111."""
+    """That is the line Civitai and the A1111 viewers read."""
     old = _state(ZIMAGE_TRANSFORMER=CKPT,
                  _APPLIED_LORAS=[("/l/style.safetensors", 0.8)],
                  _APPLIED_EDIT_LORAS=[("/e/edit.safetensors", 0.6)])
@@ -134,13 +135,13 @@ def test_the_a1111_chunk_carries_them_too():
 
 
 # ---------------------------------------------------------------------------
-# L'image d'ENTREE. Un img2img, un inpaint ou une edition sont definis autant par leur
-# entree que par leur prompt. Une seule des quatre sorties la nommait: le lot (basename
-# en dur), pas l'img2img simple, pas l'inpaint, et l'edition n'ecrivait que le NOMBRE
-# de references.
-# Nom par defaut et pas chemin: le PNG voyage alors que le sidecar reste local, et cote
-# UI Gradio depose les envois dans un dossier temporaire dont seul le nom de base porte
-# le nom d'origine du fichier.
+# The INPUT image. An img2img, an inpaint or an edit are defined as much by their
+# input as by their prompt. Only one of the four outputs named it: the batch (a hardcoded
+# basename), not the plain img2img, not the inpaint, and the edit only wrote the NUMBER
+# of references.
+# The default name and not the path: the PNG travels while the sidecar stays local, and on
+# the UI side Gradio drops the uploads into a temporary folder where only the base name
+# carries the file's original name.
 # ---------------------------------------------------------------------------
 
 # Full input paths: os.path.join keeps the separator of the running OS, and
@@ -162,15 +163,15 @@ def _pil(name=None):
 def test_a_path_a_pil_and_an_editor_all_give_the_name():
     assert P.source_meta(SRC) == {"source": "shot.png"}
     assert P.source_meta(_pil(TMP_UPLOAD)) == {"source": "ma_photo.png"}
-    # gr.ImageEditor: apres un recadrage le composite est neuf et sans nom, le fond
-    # garde celui du fichier charge -- d'ou l'ordre d'essai.
+    # gr.ImageEditor: after a crop the composite is new and nameless, the background
+    # keeps the one of the loaded file -- hence the order in which we try.
     assert P.source_meta({"background": _pil(TMP_UPLOAD),
                           "composite": _pil()}) == {"source": "ma_photo.png"}
     print("OK test_a_path_a_pil_and_an_editor_all_give_the_name")
 
 
 def test_an_unknown_source_records_nothing():
-    """Une image collee ou generee n'a pas de fichier: rien plutot qu'un nom invente."""
+    """An image pasted or generated has no file: nothing rather than an invented name."""
     assert P.source_meta(_pil()) == {}
     assert P.source_meta(None) == {}
     assert P.source_meta([None, None]) == {}

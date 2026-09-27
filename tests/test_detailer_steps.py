@@ -1,11 +1,12 @@
-"""Une passe de detailer tournait a 12 steps sur un modele distille pour 4.
+"""A detailer pass ran at 12 steps on a model distilled for 4.
 
-Le curseur "Refine steps" (defaut 12) vient de crispz-studio / Z-Image. Sur klein
-il triplait le cout de CHAQUE main et de CHAQUE visage sans rien changer a l'image.
-Mesure (RTX 5090, 2 mains): 4B 2.0 -> 0.9 s/main, 9B GGUF 12.2 -> 6.4 s/main, pour
-un ecart d'image de MAE 0.7.
+The "Refine steps" slider (12 by default) comes from crispz-studio / Z-Image. On klein
+it tripled the cost of EVERY hand and EVERY face without changing anything in the image.
+Measured (RTX 5090, 2 hands): 4B 2.0 -> 0.9 s/hand, 9B GGUF 12.2 -> 6.4 s/hand, for
+an image difference of MAE 0.7.
 
 Run:  .venv/Scripts/python tests/test_detailer_steps.py
+
 """
 import os
 import sys
@@ -41,7 +42,7 @@ def test_follows_the_model_profile_by_default():
 
 
 def test_never_raises_the_slider():
-    """Descendre le curseur sous le profil reste un choix de l'utilisateur."""
+    """Taking the slider below the profile stays the user's choice."""
     def check():
         D.CONFIG.pop("detailer_steps", None)
         assert D._detailer_steps(3) == 3

@@ -1,15 +1,16 @@
-"""Deux pieges de LoRA propres au fork klein (pipe d'edition == pipe de base).
+"""Two LoRA traps specific to the klein fork (the edit pipe == the base pipe).
 
-1. DIALECTE DE CLES. diffusers/peft attend `.lora_A.weight` / `.lora_B.weight`.
-   Des LoRA publiees ecrivent `.lora.down.weight` / `.lora.up.weight` -- et
-   certaines MELANGENT les deux (lrzjason/Consistance_Edit_Lora: 160 cles PEFT +
-   40 cles down/up). peft charge alors ce qu'il reconnait et cree un adaptateur
-   NEUF pour le reste: le LoRA s'applique partiellement, SANS erreur.
+1. THE KEY DIALECT. diffusers/peft expects `.lora_A.weight` / `.lora_B.weight`.
+   Some published LoRAs write `.lora.down.weight` / `.lora.up.weight` -- and
+   some MIX the two (lrzjason/Consistance_Edit_Lora: 160 PEFT keys +
+   40 down/up keys). peft then loads what it recognises and creates a NEW
+   adapter for the rest: the LoRA applies partially, WITHOUT an error.
 
-2. ESPACE DE NOMS DES ADAPTATEURS. Chez l'amont, edition et base sont deux modeles
-   distincts. Ici c'est le meme objet: les deux jeux se disputaient `cz_lora_i`
-   ("Adapter name cz_lora_0 already in use") et `set_adapters` desactivait
-   silencieusement les LoRA de base. _apply_edit_loras synchronise donc l'UNION.
+2. THE ADAPTERS' NAMESPACE. Upstream, editing and the base are two distinct
+   models. Here it is the same object: the two sets fought over `cz_lora_i`
+   ("Adapter name cz_lora_0 already in use") and `set_adapters` silently
+   disabled the base LoRAs. So _apply_edit_loras synchronises the UNION.
+
 """
 import os
 import sys
@@ -47,7 +48,7 @@ def test_detects_the_alternate_dialect():
 
 
 def test_normalizes_a_mixed_file():
-    """Le cas reel: un fichier qui melange les deux dialectes."""
+    """The real case: a file that mixes both dialects."""
     p = _write("mixed.safetensors", [
         "transformer.single_transformer_blocks.0.attn.to_out.lora_A.weight",
         "transformer.single_transformer_blocks.0.attn.to_out.lora_B.weight",
@@ -55,7 +56,7 @@ def test_normalizes_a_mixed_file():
         "transformer.transformer_blocks.0.attn.to_k.lora.up.weight"])
     assert P._lora_needs_normalizing(p) is True
     sd, n = P._load_lora_normalized(p)
-    assert n == 2, n                       # seules les 2 cles down/up sont renommees
+    assert n == 2, n                       # only the 2 down/up keys are renamed
     assert set(sd) == {
         "transformer.single_transformer_blocks.0.attn.to_out.lora_A.weight",
         "transformer.single_transformer_blocks.0.attn.to_out.lora_B.weight",
@@ -66,8 +67,8 @@ def test_normalizes_a_mixed_file():
 
 
 def test_edit_loras_sync_the_union_with_the_base_set():
-    """Regression: un LoRA de base + un preset d'edition -> 'Adapter name cz_lora_0
-    already in use', edition impossible. _apply_edit_loras doit poser l'UNION."""
+    """A regression: a base LoRA + an edit preset -> 'Adapter name cz_lora_0
+    already in use', editing impossible. _apply_edit_loras must apply the UNION."""
     calls = {}
 
     def fake_sync(pipe, wanted, applied, force=False, tag="LoRA"):
@@ -112,15 +113,15 @@ def test_union_dedupes_on_path_first_weight_wins():
 
 
 # ---------------------------------------------------------------------------
-# 3. LyCORIS (LoKr / LoHa). La mise a jour y est factorisee en produit de Kronecker
-#    (LoKr) ou de Hadamard (LoHa), et diffusers n'en convertit ni l'un ni l'autre.
-#    Le piege etait qu'il n'y avait AUCUNE erreur: les cles d'ai-toolkit s'appellent
-#    'diffusion_model.<module>.lokr_w1' -- ni '.lora_A/B' ni le prefixe 'lora_unet_'
-#    -- donc la garde checkpoint les prenait pour un modele, et la garde LoRA les
-#    passait telles quelles a peft, qui n'appliquait rien en silence.
-#    Le LoKr est desormais supporte par FUSION dans les poids (cf. test_lokr_merge);
-#    ces tests-ci ne verifient plus que l'AIGUILLAGE. Le LoHa, lui, reste refuse.
-#    Releve sur Ashen3/SNOFS (Klein9b, 112 couches x w1/w2/alpha).
+# 3. LyCORIS (LoKr / LoHa). The update is factorised there into a Kronecker product
+#    (LoKr) or a Hadamard one (LoHa), and diffusers converts neither.
+#    The trap was that there was NO error at all: ai-toolkit's keys are called
+#    'diffusion_model.<module>.lokr_w1' -- neither '.lora_A/B' nor the 'lora_unet_'
+#    prefix -- so the checkpoint guard took them for a model, and the LoRA guard
+#    passed them as they were to peft, which applied nothing in silence.
+#    The LoKr is now supported by MERGING into the weights (see test_lokr_merge);
+#    these tests here only check the ROUTING. The LoHa, for its part, stays refused.
+#    Caught on Ashen3/SNOFS (Klein9b, 112 layers x w1/w2/alpha).
 # ---------------------------------------------------------------------------
 
 def _lycoris(name, suffixes):
@@ -136,9 +137,9 @@ def _lycoris(name, suffixes):
 
 
 def test_a_lokr_is_routed_to_the_lora_folder():
-    """Depuis 1.27.0 le LoKr est SUPPORTE, par fusion dans les poids: il n'est donc
-    refuse que la ou il ne va pas -- le dossier des checkpoints -- et le refus dit ou
-    le mettre. La fusion elle-meme est couverte par tests/test_lokr_merge.py."""
+    """Since 1.27.0 the LoKr is SUPPORTED, by merging into the weights: so it is
+    only refused where it does not belong -- the checkpoints folder -- and the refusal says
+    where to put it. The merging itself is covered by tests/test_lokr_merge.py."""
     p = _lycoris("snofs_like_lokr.safetensors", ("lokr_w1", "lokr_w2"))
     why = P._safetensors_unsupported(p)
     assert why and "LoKr" in why, why
@@ -155,27 +156,27 @@ def test_a_loha_is_named_as_such():
 
 
 def test_a_real_peft_lora_still_passes():
-    """Le controle: la garde ne doit toucher a rien de ce qui marchait."""
+    """The control: the guard must touch nothing of what worked."""
     p = _write("real_peft.safetensors",
                [f"transformer.blocks.{i}.attn.to_q.lora_{ab}.weight"
                 for i in range(6) for ab in ("A", "B")])
     assert P._lora_unsupported(p) is None
-    assert P._safetensors_unsupported(p) is not None   # une LoRA reste refusee en checkpoint
+    assert P._safetensors_unsupported(p) is not None   # a LoRA stays refused as a checkpoint
     print("OK test_a_real_peft_lora_still_passes")
 
 
 # ---------------------------------------------------------------------------
-# 4. LoRA QUANTIFIEE. Le loader dequant de cette app ne sert QUE le transformer:
-#    _safetensors_dequant n'est appele que depuis _load_transformer. Une LoRA fp8 ou
-#    int8 partait donc telle quelle dans load_lora_weights, ou ses tenseurs
-#    'weight_scale' ne sont pas des cles LoRA connues -- donc ignores -- et ou ses
-#    poids etaient castes en bf16 SANS leur echelle: des valeurs plusieurs ordres de
-#    grandeur trop petites, soit une LoRA qui ne fait rien, en silence. Meme piege que
-#    le FP4 et le LyCORIS, par la meme porte.
+# 4. A QUANTISED LoRA. This app's dequant loader only serves the transformer:
+#    _safetensors_dequant is only called from _load_transformer. So an fp8 or
+#    int8 LoRA went as it was into load_lora_weights, where its
+#    'weight_scale' tensors are not known LoRA keys -- so ignored -- and where its
+#    weights were cast to bf16 WITHOUT their scale: values several orders of
+#    magnitude too small, that is to say a LoRA that does nothing, in silence. The same
+#    trap as the FP4 and the LyCORIS, through the same door.
 # ---------------------------------------------------------------------------
 
 def _lora_file(name, dtype, scaled=True):
-    """Fausse LoRA FLUX.2 dans le dtype demande; `scaled` ajoute les facteurs."""
+    """A fake FLUX.2 LoRA in the dtype asked for; `scaled` adds the factors."""
     sd = {}
     for i in range(4):
         b = f"transformer.transformer_blocks.{i}.attn.to_q"
@@ -199,7 +200,7 @@ def _with_9B_base(fn):
 
 
 def test_a_bf16_lora_still_passes():
-    """Le controle, d'abord: la garde ne doit rien casser de ce qui marchait."""
+    """The control first: the guard must break nothing of what worked."""
     p = _lora_file("q_bf16.safetensors", torch.bfloat16, scaled=False)
     assert _with_9B_base(lambda: P._lora_unsupported(p)) is None
     print("OK test_a_bf16_lora_still_passes")
@@ -221,8 +222,9 @@ def test_an_int8_lora_is_refused_too():
 
 
 def test_the_variant_check_still_comes_first():
-    """Une LoRA 4B ET fp8 doit s'entendre dire la VARIANTE: c'est le refus qui porte
-    l'instruction utile (changer de base), et le format n'y changerait rien."""
+    """A LoRA that is both 4B AND fp8 must be told about the VARIANT: it is the refusal
+    that carries the useful instruction (change base), and the format would change nothing
+    there."""
     sd = {}
     for i in range(4):
         b = f"transformer.transformer_blocks.{i}.attn.to_q"
@@ -237,10 +239,10 @@ def test_the_variant_check_still_comes_first():
 
 
 def test_alpha_keys_are_folded_and_dropped():
-    """RealSkin (4B/9B), vu le 2026-09-18 : noms diffusers, matrices lora_down/lora_up et un
-    `.alpha` par module. Tel quel, diffusers refuse tout le fichier ("all LoRA param names
-    contain 'lora'") et rien n'est rendu. L'alpha est une echelle alpha / rang, a porter
-    dans B."""
+    """RealSkin (4B/9B), seen on 2026-09-18: diffusers names, lora_down/lora_up matrices and
+    one `.alpha` per module. As it is, diffusers refuses the whole file ("all LoRA param names
+    contain 'lora'") and nothing is rendered. The alpha is an alpha / rank scale, to be carried
+    in B."""
     base = "transformer.single_transformer_blocks.0.attn.to_out"
     A, B = torch.randn(4, 8), torch.randn(6, 4)
     for alpha, scale in ((4.0, 1.0), (2.0, 0.5)):
@@ -253,7 +255,7 @@ def test_alpha_keys_are_folded_and_dropped():
         assert all("lora" in k for k in sd)
         assert torch.allclose(sd[base + ".lora_A.weight"], A)
         assert torch.allclose(sd[base + ".lora_B.weight"], B * scale), alpha
-    # dialecte PEFT + alpha : diffusers le refuse tout autant
+    # the PEFT dialect + alpha: diffusers refuses it just as much
     p = os.path.join(TMP, "peft_alpha.safetensors")
     save_file({base + ".lora_A.weight": A, base + ".lora_B.weight": B,
                base + ".alpha": torch.tensor(8.0)}, p)
@@ -265,8 +267,8 @@ def test_alpha_keys_are_folded_and_dropped():
 
 
 def test_kohya_naming_is_left_to_diffusers():
-    """Le nommage kohya (lora_unet_...) : diffusers le reconnait a ses `.lora_down.weight`
-    et le convertit alpha compris. Le renommer avant lui masquait le format."""
+    """The kohya naming (lora_unet_...): diffusers recognises it by its `.lora_down.weight`
+    and converts it, the alpha included. Renaming it beforehand hid the format from it."""
     p = _write("kohya.safetensors", [
         "lora_unet_double_blocks_0_img_attn_proj.lora_down.weight",
         "lora_unet_double_blocks_0_img_attn_proj.lora_up.weight",

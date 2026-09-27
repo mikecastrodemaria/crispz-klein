@@ -31,7 +31,7 @@ _HAS_CV2 = importlib.util.find_spec("cv2") is not None
 
 
 class _Releases:
-    """Remplace cz_pipeline.release_vram le temps d'un test et compte les appels."""
+    """Replaces cz_pipeline.release_vram for the length of a test and counts the calls."""
 
     def __init__(self):
         import cz_pipeline
@@ -136,7 +136,7 @@ def test_release_vram_offloads_only_a_hooked_base_pipe():
 
 
 def _detail(refine):
-    """cz_detailer._detail_regions sur deux zones, avec une passe de refine simulee."""
+    """cz_detailer._detail_regions on two areas, with a simulated refine pass."""
     import cz_pipeline
     import cz_detailer
     real = (cz_pipeline.get_pipe, cz_pipeline._refine_whole)

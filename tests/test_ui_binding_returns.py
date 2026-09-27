@@ -1,14 +1,15 @@
-"""Un handler cable sur outputs=None ne doit rien renvoyer.
+"""A handler wired on outputs=None must return nothing.
 
-Gradio 5 avertit a CHAQUE declenchement quand une valeur renvoyee n'a pas de
-composant pour l'accueillir ("A function returned too many output values"). Sur un
-curseur, cela veut dire une paire d'avertissements par mouvement -- du bruit qui
-finit par masquer un vrai avertissement.
+Gradio 5 warns on EVERY firing when a returned value has no
+component to receive it ("A function returned too many output values"). On a
+slider, that means a pair of warnings per movement -- noise that
+ends up hiding a real warning.
 
-Le test relit les branchements de cz_ui et verifie qu'aucun handler branche sur
-outputs=None ne comporte de `return <valeur>`.
+The test re-reads cz_ui's wirings and checks that no handler wired on
+outputs=None holds a `return <value>`.
 
 Run:  .venv/Scripts/python tests/test_ui_binding_returns.py
+
 """
 import inspect
 import io

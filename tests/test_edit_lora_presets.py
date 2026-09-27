@@ -26,7 +26,7 @@ import cz_edit_loras  # noqa: E402
 
 
 def _fake_lora(path, hidden, rank=4):
-    """LoRA minuscule au layout FLUX d'origine, avec la dimension cachee d'une variante."""
+    """A tiny LoRA in the original FLUX layout, with a variant's hidden dimension."""
     save_file({
         "diffusion_model.double_blocks.0.img_attn.proj.lora_A.weight": torch.zeros(rank, hidden),
         "diffusion_model.double_blocks.0.img_attn.proj.lora_B.weight": torch.zeros(hidden, rank),
@@ -65,7 +65,7 @@ def test_consistence_9b_uses_a_local_copy_without_downloading():
         assert cz_edit_loras.is_downloaded("Consistence-Edit 9B")
         assert os.path.samefile(cz_edit_loras.resolve("Consistence-Edit 9B"), copy)
         assert cz_edit_loras.status_label("Consistence-Edit 9B").endswith("✓")
-        assert not cz_edit_loras.is_downloaded("Consistence-Edit")    # le 4B n'y est pas
+        assert not cz_edit_loras.is_downloaded("Consistence-Edit")    # the 4B is not in there
     finally:
         cz_edit_loras.lora_dirs, cz_edit_loras.edit_loras_dir, cz_edit_loras._download = real
         shutil.rmtree(tmp, ignore_errors=True)
@@ -109,7 +109,7 @@ def test_picking_a_preset_sets_its_weight_on_the_slider():
         assert applied == [[("Consistence-Edit 9B", 0.6)]], applied
         assert slider.get("value") == 0.6, slider
         assert "0.6" in note, note
-        # "None" : rien a poser, le curseur ne bouge pas.
+        # "None": nothing to apply, the slider does not move.
         dd, note, slider = cz_ui._ui_edit_lora_pick("None", 0.8, progress=lambda *a, **k: None)
         assert applied[-1] == [] and "value" not in slider, (applied, slider)
     finally:

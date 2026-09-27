@@ -1,18 +1,19 @@
-"""Portage FLUX.2 Klein : les 4 chemins du protocole v1 sur le vrai GPU.
+"""The FLUX.2 Klein port: the 4 paths of protocol v1 on the real GPU.
 
     gen      -> generate()        Flux2KleinPipeline
-    edit     -> generate_omni()   Flux2KleinPipeline, MEME objet (multi-ref natif)
+    edit     -> generate_omni()   Flux2KleinPipeline, the SAME object (multi-ref native)
     inpaint  -> inpaint_run()     Flux2KleinInpaintPipeline
-    upscale  -> _refine_whole()   Flux2KleinInpaintPipeline + masque blanc injecte
+    upscale  -> _refine_whole()   Flux2KleinInpaintPipeline + an injected white mask
+
 """
 import os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Le repo de base est PIN sur le 4B avant l'import de cz_pipeline. Sans ca, ce test
-# suit le dernier modele choisi dans l'UI (persiste dans preferences.json depuis
-# 1.19.0): choisir le 9B pour un projet faisait soudain telecharger 35 Go et
-# reclamer ~29 Go de VRAM a la suite de tests, qui echouait pour une raison qui
-# n'a rien a voir avec le code. Mettre KLEIN_E2E_MODEL pour viser une autre base.
+# The base repo is PINNED on the 4B before cz_pipeline is imported. Without that, this
+# test follows the last model chosen in the UI (persisted in preferences.json since
+# 1.19.0): choosing the 9B for a project suddenly made a test suite download 35 GB and
+# ask for ~29 GB of VRAM, and fail for a reason that has nothing to do with the code.
+# Set KLEIN_E2E_MODEL to aim at another base.
 os.environ["KLEIN_MODEL"] = (os.environ.get("KLEIN_E2E_MODEL")
                              or "black-forest-labs/FLUX.2-klein-4B")
 

@@ -1,20 +1,21 @@
-"""Encodeur texte de remplacement (Models > Checkpoints > Text encoder).
+"""A replacement text encoder (Models > Checkpoints > Text encoder).
 
-FLUX.2 lit trois etats caches INTERMEDIAIRES de l'encodeur Qwen3 dans un
-context_embedder large de 3 x hidden: un autre encodeur ne se branche que s'il a la
-meme famille, la meme largeur et le meme nombre de couches. Un Qwen3-4B "abliterated"
-convient au 4B; le meme sur le 9B (4096 de large) ne peut pas marcher, et le refus doit
-le dire AVANT de lire 8 Go.
+FLUX.2 reads three INTERMEDIATE hidden states of the Qwen3 encoder in a
+context_embedder 3 x hidden wide: another encoder only plugs in when it has the
+same family, the same width and the same number of layers. A Qwen3-4B "abliterated"
+suits the 4B; the same one on the 9B (4096 wide) cannot work, and the refusal must
+say so BEFORE reading 8 GB.
 
-Ces tests verrouillent aussi ce qui rendrait l'option dangereuse en silence:
-  - un changement d'encodeur vide le cache d'embeddings (sinon les anciens encodages
-    restent servis) et l'encodeur fait partie de la CLE du cache -- id(enc) seul ne
-    suffit pas, CPython recycle les id d'objets liberes;
-  - les metadonnees nomment l'encodeur qui a REELLEMENT tourne, par son nom de dossier
-    et jamais par son chemin (qui finirait dans les PNG partages);
-  - la file garde l'encodeur du job.
+These tests also lock down what would make the option silently dangerous:
+  - a change of encoder empties the embeddings cache (otherwise the old encodings
+    stay served) and the encoder is part of the cache KEY -- id(enc) alone is not
+    enough, CPython recycles the ids of freed objects;
+  - the metadata names the encoder that REALLY ran, by its folder name
+    and never by its path (which would end up in the shared PNGs);
+  - the queue keeps the job's encoder.
 
 Run:  .venv/Scripts/python tests/test_text_encoder.py
+
 """
 import json
 import os
@@ -45,7 +46,7 @@ def _folder(cfg, sub=None, name="enc"):
 
 
 class _Base:
-    """Remplace la config de l'encodeur du repo de base (pas de reseau, pas de HF)."""
+    """Replaces the encoder config of the base repo (no network, no HF)."""
 
     def __init__(self, cfg):
         self.cfg = cfg
@@ -61,7 +62,7 @@ class _Base:
 def test_same_architecture_is_accepted():
     with _Base(QWEN4B):
         assert P._text_encoder_problem(_folder(QWEN4B)) is None
-        # poids dans un sous-dossier text_encoder/ (copie d'un repo diffusers)
+        # weights in a text_encoder/ subfolder (a copy of a diffusers repo)
         assert P._text_encoder_problem(_folder(QWEN4B, "text_encoder")) is None
     print("OK test_same_architecture_is_accepted")
 
@@ -119,7 +120,7 @@ def test_changing_the_encoder_frees_the_pipe_and_the_cache():
         assert P.TEXT_ENCODER == r"D:\enc\qwen3-abl"
         assert P._BASE_PIPE is None, "le pipeline doit etre libere"
         assert not P._EMBED_CACHE, "les anciens encodages resteraient servis"
-        # meme valeur: rien ne bouge, pas de rechargement inutile
+        # the same value: nothing moves, no pointless reload
         sentinel = P._BASE_PIPE = object()
         P.set_text_encoder(r"D:\enc\qwen3-abl")
         assert P._BASE_PIPE is sentinel
@@ -141,7 +142,7 @@ class FakePipe:
 
 
 def test_the_embed_key_carries_the_encoder():
-    """Meme prompt, meme objet pipe, deux encodeurs: deux encodages."""
+    """The same prompt, the same pipe object, two encoders: two encodings."""
     P._embed_cache_clear()
     old = P._TEXT_ENCODER_ACTIVE
     try:
@@ -167,7 +168,7 @@ def test_metadata_names_the_encoder_that_ran_and_never_its_path():
         m = P._gen_meta("txt2img", "p")
         assert m["text_encoder"] == "qwen3-4b-abliterated", m
         assert "someone" not in json.dumps(m), "chemin local dans les metadonnees"
-        # demande mais ecarte au chargement: nomme a part
+        # asked for but discarded at load time: named apart
         P._TEXT_ENCODER_ACTIVE = ""
         m = P._gen_meta("txt2img", "p")
         assert "text_encoder" not in m and m["text_encoder_not_applied"] == "qwen3-4b-abliterated", m
@@ -209,7 +210,7 @@ def test_the_queue_keeps_the_encoder():
         P.set_text_encoder = lambda s: calls.append(s)
         U._q_restore_model_state(ms)
         assert calls == [r"D:\enc\qwen3-abl"], calls
-        # snapshot d'avant l'option: on ne touche pas a l'encodeur courant
+        # a snapshot from before the option: we do not touch the current encoder
         calls.clear()
         U._q_restore_model_state({k: v for k, v in ms.items() if k != "text_encoder"})
         assert calls == [], calls
@@ -219,8 +220,8 @@ def test_the_queue_keeps_the_encoder():
 
 
 def test_default_picked_in_the_ui_survives_a_restart():
-    """Choisir "Default" ecrit "" dans les preferences: au redemarrage, une valeur de
-    config.txt ne doit pas revenir par-dessus. L'environnement gagne toujours."""
+    """Choosing "Default" writes "" into the preferences: on a restart, a value from
+    config.txt must not come back over it. The environment always wins."""
     cfg = {"text_encoder": r"D:\enc\from-config"}
     assert P._resolve_text_encoder({}, {}, cfg) == r"D:\enc\from-config"
     assert P._resolve_text_encoder({}, {"text_encoder": ""}, cfg) == ""
@@ -231,8 +232,8 @@ def test_default_picked_in_the_ui_survives_a_restart():
 
 
 def test_compatible_encoders_in_the_hf_cache_are_listed():
-    """Un encodeur telecharge depuis HF vit dans le cache HF: la liste doit le montrer.
-    Pas un pipeline diffusers, pas une autre largeur, pas une config sans poids."""
+    """An encoder downloaded from HF lives in the HF cache: the list must show it.
+    Not a diffusers pipeline, not another width, not a config with no weights."""
     root = tempfile.mkdtemp(prefix="hfcache_")
 
     def snap(repo, sub=None, cfg=QWEN4B, weights=True, pipeline=False):
@@ -249,9 +250,9 @@ def test_compatible_encoders_in_the_hf_cache_are_listed():
 
     snap("huihui-ai/Huihui-Qwen3-4B-abliterated-v2")
     snap("ponpoke/flux2-klein-4b-uncensored-text-encoder", sub="flux2-klein-4b-uncensored-text-encoder")
-    snap("Qwen/Qwen3-8B", cfg=QWEN8B)                                    # autre largeur
+    snap("Qwen/Qwen3-8B", cfg=QWEN8B)                                    # another width
     snap("Tongyi-MAI/Z-Image-Turbo", sub="text_encoder", pipeline=True)  # pipeline diffusers
-    snap("someone/config-only", weights=False)                           # poids absents
+    snap("someone/config-only", weights=False)                           # the weights are absent
     old = (P._hf_cache_dir, P._base_text_encoder_config)
     try:
         P._hf_cache_dir = lambda: root
@@ -262,12 +263,12 @@ def test_compatible_encoders_in_the_hf_cache_are_listed():
     assert got == ["huihui-ai/Huihui-Qwen3-4B-abliterated-v2",
                    "ponpoke/flux2-klein-4b-uncensored-text-encoder/"
                    "flux2-klein-4b-uncensored-text-encoder"], got
-    # avec un repo de base 9B: les deux Qwen3-4B quittent la liste et sont NOMMES a cote
+    # with a 9B base repo: both Qwen3-4B leave the list and are NAMED next to it
     old = (P._hf_cache_dir, P._base_text_encoder_config)
     try:
         P._hf_cache_dir = lambda: root
         P._base_text_encoder_config = lambda base=None: QWEN8B
-        # le Qwen3-8B du faux cache convient au 9B: c'est lui, et lui seul, qui est propose
+        # the fake cache's Qwen3-8B suits the 9B: it is the one, and the only one, offered
         assert [v for _l, v in P.list_cached_text_encoders()] == ["Qwen/Qwen3-8B"]
         other, width = P.cached_text_encoder_mismatches()
         import cz_ui as U

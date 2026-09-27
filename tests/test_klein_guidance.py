@@ -1,11 +1,12 @@
-"""Point C de FORK.md : klein-4B est distille (~4 steps). La doc diffusers dit
-"For step-wise distilled models, guidance_scale is ignored". Si c'est vrai, le
-curseur "guidance" de l'UI est inoperant et le debat A (negative_prompt_embeds)
-est tranche d'office.
+"""Point C of FORK.md: klein-4B is distilled (~4 steps). The diffusers doc says
+"For step-wise distilled models, guidance_scale is ignored". Should that be true, the
+UI's "guidance" slider is inoperative and debate A (negative_prompt_embeds)
+is settled outright.
 
-Rend la MEME seed a guidance_scale 1.0 / 4.0 / 8.0 et compare les pixels.
-    identique  -> guidance ignore  -> supports.negative = False, _cfg vide
-    different  -> guidance actif   -> coder les negative_prompt_embeds
+Renders the SAME seed at guidance_scale 1.0 / 4.0 / 8.0 and compares the pixels.
+    identical -> the guidance is ignored -> supports.negative = False, an empty _cfg
+    different -> the guidance is active  -> code the negative_prompt_embeds
+
 """
 import os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

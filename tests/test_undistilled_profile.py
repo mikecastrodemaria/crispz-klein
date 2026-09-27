@@ -1,10 +1,11 @@
-"""La base NON distillee officielle recoit le preset Undistilled, pas 4 steps sans CFG.
+"""The official UNDISTILLED base gets the Undistilled preset, not 4 steps with no CFG.
 
-Releve sur le banc du 2026-09-10: flux-2-klein-base-4b-fp8, fichier officiel sans
-sidecar CivitAI, tombait sur le profil par nom ("klein" -> 4 steps, guidance 1.0) et
-rendait une image inachevee, dans le banc comme dans l'app.
+Caught on the 2026-09-10 bench: flux-2-klein-base-4b-fp8, an official file with no
+CivitAI sidecar, fell on the name profile ("klein" -> 4 steps, guidance 1.0) and
+rendered an unfinished image, in the bench as in the app.
 
 Run:  .venv/Scripts/python tests/test_undistilled_profile.py
+
 """
 import os
 import sys
@@ -17,7 +18,7 @@ import cz_ui as U
 
 def _profile(path):
     old = cz_civitai.load_civitai_sidecar
-    cz_civitai.load_civitai_sidecar = lambda p: {}        # fichier officiel: pas de sidecar
+    cz_civitai.load_civitai_sidecar = lambda p: {}        # an official file: no sidecar
     try:
         return U._profile_for_checkpoint(path)
     finally:
@@ -31,7 +32,7 @@ def test_the_official_undistilled_base_gets_the_undistilled_preset():
                  "flux2_klein_base_4b.safetensors"):
         st, g, why = _profile(os.path.join("F:\\m", name))
         assert (st, g) == (pst, pg), (name, st, g)
-        assert "undistilled" in why, why           # le banc classe la source par ce mot
+        assert "undistilled" in why, why           # the bench classifies the source by that word
     print("OK test_the_official_undistilled_base_gets_the_undistilled_preset")
 
 

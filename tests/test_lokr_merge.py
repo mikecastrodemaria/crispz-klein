@@ -1,19 +1,20 @@
-"""LoKr LyCORIS: fusion dans les poids (dW = w1 (x) w2).
+"""A LyCORIS LoKr: merged into the weights (dW = w1 (x) w2).
 
-Pourquoi une fusion et pas un adaptateur: sur FLUX.2 le q/k/v est FUSIONNE cote
-checkpoint ([3d, d]) et SEPARE cote diffusers (trois [d, d]). Un produit de Kronecker
-ne se tranche pas en trois -- sur SNOFS, w1 est [4,4] et w2 [3072,1024], donc les blocs
-de w1 font 3072 lignes la ou la coupe en tombe sur 4096. Le delta MATERIALISE, lui, se
-coupe comme n'importe quelle matrice. C'est ce que ces tests verrouillent, en passant
-par le convertisseur de cles de diffusers lui-meme (le meme que from_single_file), pas
-par une table de correspondance recopiee a la main qui pourrait deriver de lui.
+Why a merge and not an adapter: on FLUX.2 the q/k/v is FUSED on the
+checkpoint side ([3d, d]) and SEPARATE on the diffusers side (three [d, d]). A Kronecker
+product cannot be cut in three -- on SNOFS, w1 is [4,4] and w2 [3072,1024], so w1's
+blocks are 3072 rows where the cut falls on 4096. The MATERIALISED delta, for its part,
+cuts like any other matrix. That is what these tests lock down, going through
+diffusers' own key converter (the same one as from_single_file), not through
+a correspondence table copied by hand that could drift from it.
 
-L'echelle est l'autre piege. LyCORIS n'applique AUCUN scalaire quand w1 et w2 sont
-pleines (il n'y a pas de rang), et peft calcule alpha/r. Les fichiers ai-toolkit
-ecrivent alors alpha = lora_dim -- 1e10 sur SNOFS, mesure sur le fichier reel -- si
-bien que les deux conventions donnent 1.0. Les deux sont testees.
+The scale is the other trap. LyCORIS applies NO scalar when w1 and w2 are
+full (there is no rank), and peft computes alpha/r. The ai-toolkit files
+then write alpha = lora_dim -- 1e10 on SNOFS, measured on the real file -- so
+that both conventions give 1.0. Both are tested.
 
 Run:  .venv/Scripts/python tests/test_lokr_merge.py
+
 """
 import os
 import sys
@@ -30,7 +31,7 @@ os.makedirs(TMP, exist_ok=True)
 
 
 class _FakeTransformer:
-    """Juste ce que _merge_lokr consomme: named_parameters()."""
+    """Just what _merge_lokr consumes: named_parameters()."""
 
     def __init__(self, shapes):
         self._p = {k: torch.nn.Parameter(torch.zeros(*s)) for k, s in shapes.items()}
@@ -49,7 +50,7 @@ def _write(name, tensors):
 
 
 def test_the_kronecker_product_lands_on_the_right_weight():
-    """Couche simple: double_blocks.0.img_attn.proj -> attn.to_out.0."""
+    """A plain layer: double_blocks.0.img_attn.proj -> attn.to_out.0."""
     w1 = torch.randn(2, 2)
     w2 = torch.randn(2, 2)
     p = _write("lokr_proj.safetensors", {
@@ -66,9 +67,9 @@ def test_the_kronecker_product_lands_on_the_right_weight():
 
 
 def test_a_fused_qkv_is_split_into_three_weights():
-    """Le cas qui interdit l'approche adaptateur: [3d, d] -> to_q / to_k / to_v.
-    On coupe le delta, jamais les facteurs -- et la coupe ne tombe volontairement PAS
-    sur un bloc de w1 (w2 a 3 lignes, la coupe en fait 2), comme sur SNOFS."""
+    """The case that forbids the adapter approach: [3d, d] -> to_q / to_k / to_v.
+    We cut the delta, never the factors -- and the cut deliberately does NOT fall
+    on a block of w1 (w2 has 3 rows, the cut makes 2 of them), as on SNOFS."""
     w1 = torch.randn(2, 2)
     w2 = torch.randn(3, 4)                     # -> delta [6, 8], chunk 3 -> [2, 8]
     p = _write("lokr_qkv.safetensors", {
@@ -83,7 +84,7 @@ def test_a_fused_qkv_is_split_into_three_weights():
     expect = torch.chunk(torch.kron(w1, w2), 3, dim=0)
     for k, e in zip(keys, expect):
         assert torch.allclose(t[k], e, atol=1e-5), k
-    # et le recollage des trois redonne bien le kron entier
+    # and sticking the three back together does give the whole kron again
     assert torch.allclose(torch.cat([t[k] for k in keys], dim=0),
                           torch.kron(w1, w2), atol=1e-5)
     print("OK test_a_fused_qkv_is_split_into_three_weights")
@@ -103,7 +104,7 @@ def test_the_lora_weight_scales_the_delta():
 
 
 def test_full_factors_use_no_scalar():
-    """SNOFS: w1 et w2 pleines, alpha = 1e10 (lora_dim sentinelle). Aucun scalaire."""
+    """SNOFS: w1 and w2 full, alpha = 1e10 (the lora_dim sentinel). No scalar."""
     mod = {"lokr_w1": torch.randn(2, 2), "lokr_w2": torch.randn(2, 2),
            "alpha": torch.tensor(1e10)}
     assert P._lokr_scale(mod, None) == 1.0
@@ -113,7 +114,7 @@ def test_full_factors_use_no_scalar():
 
 
 def test_factored_factors_use_alpha_over_rank():
-    """Forme factorisee: w1 = w1_a @ w1_b, rang 2, alpha 8 -> echelle 4, comme peft."""
+    """The factorised form: w1 = w1_a @ w1_b, rank 2, alpha 8 -> a scale of 4, as peft does."""
     a, b = torch.randn(4, 2), torch.randn(2, 4)
     mod = {"lokr_w1_a": a, "lokr_w1_b": b, "lokr_w2": torch.randn(2, 2),
            "alpha": torch.tensor(8.0)}
@@ -124,9 +125,9 @@ def test_factored_factors_use_alpha_over_rank():
 
 
 def test_a_delta_without_a_target_is_reported_not_dropped():
-    """La regle de la maison: rien ne disparait en silence. Un module que le modele
-    n'a pas doit REMONTER, sinon un mapping qui derive donnerait un merge a moitie
-    vide et un rendu presque normal -- le pire des cas."""
+    """The house rule: nothing disappears in silence. A module the model
+    does not have must be REPORTED, otherwise a mapping that drifts would give a
+    half-empty merge and an almost normal render -- the worst of cases."""
     p = _write("lokr_orphan.safetensors", {
         "diffusion_model.double_blocks.7.img_attn.proj.lokr_w1": torch.randn(2, 2),
         "diffusion_model.double_blocks.7.img_attn.proj.lokr_w2": torch.randn(2, 2),
@@ -151,8 +152,8 @@ def test_a_shape_mismatch_is_reported_not_applied():
 
 
 def test_a_lokr_is_kept_out_of_the_peft_set():
-    """Ce qui part chez peft ne doit plus contenir la LoKr (elle est dans les poids),
-    mais doit encore contenir le LoHa, pour que _sync_adapters le refuse par son nom."""
+    """What goes to peft must no longer hold the LoKr (it is in the weights),
+    but must still hold the LoHa, so that _sync_adapters refuses it by name."""
     lokr = _write("set_lokr.safetensors", {
         f"diffusion_model.double_blocks.{i}.img_attn.proj.lokr_w{j}": torch.zeros(2, 2)
         for i in range(3) for j in (1, 2)})
@@ -165,7 +166,7 @@ def test_a_lokr_is_kept_out_of_the_peft_set():
     s = [(lokr, 1.0), (loha, 1.0), (lora, 1.0)]
     assert P._lokr_set(s) == [(lokr, 1.0)]
     assert P._peft_set(s) == [(loha, 1.0), (lora, 1.0)]
-    assert P._lora_unsupported(lokr) is None          # supporte, par fusion
+    assert P._lora_unsupported(lokr) is None          # supported, by merging
     assert "LoHa" in (P._lora_unsupported(loha) or "")
     assert P._lora_unsupported(lora) is None
     print("OK test_a_lokr_is_kept_out_of_the_peft_set")
