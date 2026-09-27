@@ -1,10 +1,10 @@
 @echo off
-rem Pre-remplit le cache de dequantification des checkpoints FP8/INT8 single-file,
-rem pour ne pas payer la conversion a la premiere utilisation.
-rem Relancable a volonte: ce qui est deja en cache est saute en une seconde.
-rem Options: rebuild_cache.bat --list           (montre sans convertir)
-rem          rebuild_cache.bat --cpu            (dequantification sans toucher au GPU)
-rem          rebuild_cache.bat --only rayKlein  (un seul modele, filtre sur le nom; repetable)
+rem Pre-fills the dequantisation cache of the single-file FP8/INT8 checkpoints, so
+rem that the conversion is not paid for at the first use.
+rem Re-runnable at will: whatever is already cached is skipped in a second.
+rem Options: rebuild_cache.bat --list           (shows without converting)
+rem          rebuild_cache.bat --cpu            (dequantises without touching the GPU)
+rem          rebuild_cache.bat --only rayKlein  (a single model, filtered on the name; repeatable)
 cd /d "%~dp0"
 set PYTHONUTF8=1
 .venv\Scripts\python.exe tools\rebuild_dequant_cache.py %*
