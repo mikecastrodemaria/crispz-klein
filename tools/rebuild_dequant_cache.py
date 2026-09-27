@@ -1,34 +1,35 @@
-"""Pre-remplit le cache de dequantification (cache/dequant) pour TOUS les checkpoints
-FP8/INT8 des dossiers de modeles, pour ne pas payer la conversion a la premiere
-utilisation (elle bloque alors l'UI plusieurs minutes en plein travail).
+"""Pre-fills the dequantisation cache (cache/dequant) for ALL the FP8/INT8 checkpoints
+of the model folders, so as not to pay for the conversion on the first use (it then
+blocks the UI for several minutes in the middle of the work).
 
 Usage:
     .venv/Scripts/python tools/rebuild_dequant_cache.py [--list] [--cpu] [--only SUBSTR]
-    (ou double-clic sur rebuild_cache.bat a la racine)
+    (or double-click on rebuild_cache.bat at the root)
 
-- REPRISE GRATUITE: un checkpoint deja en cache est saute en une seconde -> relancable
-  a volonte, y compris apres une coupure.
-- --list : montre ce qui serait fait, sans rien convertir.
-- --cpu  : dequantification sans toucher au GPU (par defaut: GPU si present, cf.
-  convert_device). A preferer si un rendu tourne en meme temps.
+- RESUMING IS FREE: a checkpoint already cached is skipped in a second -> re-runnable at
+  will, including after an interruption.
+- --list : shows what would be done, without converting anything.
+- --cpu  : dequantises without touching the GPU (by default: the GPU when there is one,
+  see convert_device). To be preferred when a render is running at the same time.
 
-Les DEUX variantes sont pre-remplies, 4B comme 9B, quelle que soit celle du repo de
-base courant: la dequantification ne depend que du fichier (la clef de cache est
-chemin+taille+mtime), et le but est justement que basculer de base soit instantane.
-Seul le CHARGEMENT exige que la variante corresponde au repo choisi.
+BOTH variants are pre-filled, the 4B as well as the 9B, whatever the current base repo's
+is: the dequantisation depends on the file only (the cache key is path+size+mtime), and
+the whole point is precisely that switching base be instant. Only LOADING requires the
+variant to match the chosen repo.
 
-Ne concerne QUE les .safetensors FP8/INT8:
-  - .gguf          -> reste quantifie en VRAM, aucune dequantification a cacher;
-  - bf16/fp16      -> rien a dequantifier (un cache serait une copie bf16 -> bf16),
-                      y compris au layout ComfyUI ou seul le prefixe est retire;
-  - LoRA/SVDQuant  -> non chargeables, ignores avec leur raison.
+It concerns ONLY the FP8/INT8 .safetensors:
+  - .gguf          -> stays quantised in VRAM, no dequantisation to cache;
+  - bf16/fp16      -> nothing to dequantise (a cache would be a bf16 -> bf16 copy),
+                      including in the ComfyUI layout where only the prefix is removed;
+  - LoRA/SVDQuant  -> not loadable, skipped with their reason.
 
-Chaque entree pese le poids du build BF16, MESURE sur l'en-tete du fichier et non
-estime: ~16.9 Go pour un transformer klein-9B, ~7.2 Go pour un 4B, davantage pour un
-bundle qui embarque son encodeur texte. Le total est verifie contre
-dequant_cache_max_gb (config.txt) ET contre la place libre du disque, sinon les
-premieres conversions seraient evincees par les dernieres et le cache ne servirait a
-rien. Supprimer cache/dequant est toujours sur (il se reconstruit a la demande).
+Every entry weighs the size of the BF16 build, MEASURED on the file's header and not
+estimated: ~16.9 GB for a klein-9B transformer, ~7.2 GB for a 4B, more for a bundle that
+carries its text encoder. The total is checked against dequant_cache_max_gb (config.txt)
+AND against the disk's free space, otherwise the first conversions would be evicted by
+the last ones and the cache would be of no use. Deleting cache/dequant is always safe (it
+rebuilds itself on demand).
+
 """
 import os
 import sys
@@ -71,22 +72,21 @@ import cz_pipeline as czp  # noqa: E402
 if "--cpu" in sys.argv:
     czp.CONFIG["convert_device"] = "cpu"
 
-# Tenseurs qui ne survivent PAS au dequant: les facteurs d'echelle et le descripteur
-# comfy_quant. Les compter gonflerait l'estimation d'un build a scales par ligne.
+# The tensors that do NOT survive the dequant: the scale factors and the comfy_quant
+# descriptor. Counting them would inflate the estimate of a build with per-row scales.
 _SCALE_SUFFIXES = ("_scale", "_scale_inv", ".scale_weight", ".comfy_quant")
 
 
 def bf16_gb(path):
-    """Poids du bf16 qui sera ecrit dans le cache, lu a l'EN-TETE seule (aucun
-    chargement). Recoupe avec le cache existant: 16.9 Go annonces, 16.9 Go sur le
-    disque pour rayKlein9bBFS_fp8V2.
+    """The size of the bf16 that will be written into the cache, read from the HEADER
+    alone (no loading). Cross-checked with the existing cache: 16.9 GB announced, 16.9 GB
+    on the disk for rayKlein9bBFS_fp8V2.
 
-    Bundle tout-en-un (transformer + encodeur texte + VAE, prefixe ComfyUI): on ne
-    compte QUE le transformer, exactement le filtre de _load_dequant_state_dict. La
-    premiere version comptait le fichier entier et annoncait 29.4 Go pour
-    gonzalomoKlein_v10, qui en ecrit 16.9 -- 936 tenseurs d'un Qwen3-8B et le VAE ne
-    vont jamais dans le cache. Erreur dans le sens prudent, mais le plafond reclame
-    etait gonfle d'autant."""
+    An all-in-one bundle (transformer + text encoder + VAE, the ComfyUI prefix): we count
+    ONLY the transformer, exactly _load_dequant_state_dict's filter. The first version
+    counted the whole file and announced 29.4 GB for gonzalomoKlein_v10, which writes
+    16.9 -- the 936 tensors of a Qwen3-8B and the VAE never go into the cache. An error on
+    the cautious side, but the cap it asked for was inflated by as much."""
     try:
         hdr = czp._safetensors_header(path)
     except Exception:
@@ -122,10 +122,10 @@ for d in czp._checkpoint_dirs():
             continue
         dim = czp._flux2_hidden_dim(p)
         bad = czp._safetensors_unsupported(p)
-        # Variante differente du repo de base COURANT: ca n'empeche pas de pre-remplir
-        # son cache, seulement de la charger maintenant. On la convertit quand meme --
-        # sinon basculer 4B <-> 9B repaierait la conversion, ce qui est exactement ce
-        # que ce script existe pour eviter.
+        # A variant different from the CURRENT base repo's: that does not prevent
+        # pre-filling its cache, only loading it right now. We convert it anyway --
+        # otherwise switching 4B <-> 9B would pay for the conversion again, which is
+        # exactly what this script exists to avoid.
         if bad and bad == czp._flux2_variant_mismatch(dim):
             bad = None
         if bad:

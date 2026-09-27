@@ -1,73 +1,74 @@
-"""Registre des LoRA d'EDITION FLUX.2 Klein.
+"""The registry of the FLUX.2 Klein EDIT LoRAs.
 
-Le catalogue de l'amont (crispz-qwen-edit) liste des LoRA entrainees pour
-Qwen-Image-Edit 2509/2511. Elles sont INCOMPATIBLES avec FLUX.2 Klein:
-architecture differente, cles differentes, les charger produirait au mieux une
-erreur, au pire des poids incoherents. Les annoncer dans `caps.edit_loras`
-reviendrait a promettre une capacite qui casse -- exactement ce que la regle
-maison interdit (degradation annoncee, jamais silencieuse).
+The upstream catalogue (crispz-qwen-edit) lists LoRAs trained for
+Qwen-Image-Edit 2509/2511. They are INCOMPATIBLE with FLUX.2 Klein: a different
+architecture, different keys, and loading them would produce an error at best,
+incoherent weights at worst. Announcing them in `caps.edit_loras` would amount
+to promising a capability that breaks -- exactly what the house rule forbids
+(degradation announced, never silent).
 
-`EDIT_LORA_SPECS` ne contient donc QUE des LoRA verifiees chargeables sur
-FLUX.2 Klein; le catalogue amont est conserve juste en dessous, commente, comme
-reference de merge. `tools/check_klein_extras.py` guette les nouvelles sorties.
+So `EDIT_LORA_SPECS` holds ONLY LoRAs verified as loadable on FLUX.2 Klein; the
+upstream catalogue is kept just below, commented out, as a merge reference.
+`tools/check_klein_extras.py` watches for new releases.
 
-Toute la mecanique (telechargement paresseux, resolution de chemin, index
-local, overrides config) est INCHANGEE et fonctionne des qu'une entree est
-ajoutee. `speed_names()` / `resolve_speed()` (presets Lightning) ne renvoient
-plus rien non plus: klein est deja distille a 4 steps, il n'y a pas de LoRA
-d'acceleration a empiler.
+All the machinery (the lazy download, the path resolution, the local index, the
+config overrides) is UNCHANGED and works as soon as an entry is added.
+`speed_names()` / `resolve_speed()` (the Lightning presets) return nothing any
+more either: klein is already distilled to 4 steps, there is no acceleration
+LoRA to stack.
 
-Surcharge possible dans config.txt (meme format que l'amont):
+Can be overridden in config.txt (the same format as upstream):
     "edit_loras_dir": "",
-    "edit_loras": {"Mon-Preset": {"repo": "...", "weights": "x.safetensors",
-                                  "adapter_name": "mon-preset", "prompt": "...",
-                                  "inputs": 1}}
+    "edit_loras": {"My-Preset": {"repo": "...", "weights": "x.safetensors",
+                                 "adapter_name": "my-preset", "prompt": "...",
+                                 "inputs": 1}}
+
 """
 import os
 
 from cz_core import CONFIG, _log, _dbg
 
-# Ordre = ordre du dropdown. inputs = nombre d'images attendu (2 = input + reference).
-# Ordre = ordre du dropdown. inputs = nombre d'images attendu (2 = input + reference).
+# The order = the dropdown's order. inputs = the number of images expected (2 = the input + a reference).
 EDIT_LORA_SPECS = {
     "Consistence-Edit": {
-        # Auteur: xiaozhijason / lrzjason (le meme que Anything2Real du catalogue amont).
-        # Apache-2.0, rang 128, 200 tenseurs bf16 (~368 Mo), cible FLUX.2-klein-4B.
-        # Origine CivitAI: models/1939453 version 2771678 "Flux2 Klein 4B 20260314".
-        # NB: le fichier MELANGE deux dialectes de cles (160 PEFT + 40 lora.down/up).
-        # cz_pipeline._load_lora_normalized les ramene au dialecte PEFT avant chargement,
-        # sinon peft n'en applique qu'une partie EN SILENCE (cf. FORK.md).
+        # The author: xiaozhijason / lrzjason (the same one as the upstream catalogue's
+        # Anything2Real). Apache-2.0, rank 128, 200 bf16 tensors (~368 MB), it targets
+        # FLUX.2-klein-4B.
+        # The CivitAI origin: models/1939453 version 2771678 "Flux2 Klein 4B 20260314".
+        # NB: the file MIXES two key dialects (160 PEFT + 40 lora.down/up).
+        # cz_pipeline._load_lora_normalized brings them back to the PEFT dialect before
+        # loading, otherwise peft applies only a part of it SILENTLY (see FORK.md).
         "repo": "lrzjason/Consistance_Edit_Lora",
         "weights": "f2k_4B_consist_20260314.safetensors",
         "adapter_name": "consistence-edit",
         "prompt": ("Add realistic details to the image. Restore high frequency details "
                    "from the corrupted image."),
         "inputs": 1, "base": "klein-4B",
-        "weight": 0.6,          # l'auteur conseille 0.5-0.7
+        "weight": 0.6,          # the author advises 0.5-0.7
         "local_names": ["f2k_4B_consist_20260314.safetensors",
                         "consistence_edit_flux2_klein_4b.safetensors"]},
     "Consistence-Edit 9B": {
-        # Meme auteur, meme depot, version 9B la plus recente: CivitAI models/1939453
-        # "Klein 9B lcs 20260416" (fichier du 2026-04-15, methode LCS: latent corrompu
-        # conscient du cadre + perte sur les statistiques de couleur). Rang 64, 288
-        # tenseurs bf16 (~332 Mo), dimension cachee 4096 = FLUX.2-klein-9B. Le fichier
-        # melange lui aussi deux dialectes (224 lora_A/B + 64 lora.down/up), ramenes au
-        # dialecte PEFT par cz_pipeline._load_lora_normalized: 144 modules du transformer
-        # 9B apres conversion diffusers, aucune cle perdue (verifie le 2026-09-19).
-        # Sur le 4B, la garde de variante le refuse avec une phrase (_lora_unsupported).
+        # The same author, the same repo, the most recent 9B version: CivitAI
+        # models/1939453 "Klein 9B lcs 20260416" (a file from 2026-04-15, the LCS method:
+        # a frame-aware corrupted latent + a loss on the colour statistics). Rank 64, 288
+        # bf16 tensors (~332 MB), hidden dimension 4096 = FLUX.2-klein-9B. That file mixes
+        # two dialects as well (224 lora_A/B + 64 lora.down/up), brought back to the PEFT
+        # dialect by cz_pipeline._load_lora_normalized: 144 modules of the 9B transformer
+        # after the diffusers conversion, no key lost (checked on 2026-09-19).
+        # On the 4B, the variant guard refuses it with a sentence (_lora_unsupported).
         "repo": "lrzjason/Consistance_Edit_Lora",
         "weights": "f2k_9B_lcs_consist_20260415.safetensors",
         "adapter_name": "consistence-edit-9b",
         "prompt": ("Add realistic details to the image. Restore high frequency details "
                    "from the corrupted image."),
         "inputs": 1, "base": "klein-9B",
-        "weight": 0.6,          # l'auteur conseille 0.5-0.7
+        "weight": 0.6,          # the author advises 0.5-0.7
         "local_names": ["f2k_9B_lcs_consist_20260415.safetensors"]},
 }
 
-# --- Catalogue Qwen-Image-Edit de l'amont, conserve comme REFERENCE DE MERGE.
-# --- (aucune de ces entrees ne charge sur FLUX.2: architecture et cles differentes)
-# --- Ne PAS le reactiver tel quel: ces poids ne chargent pas sur FLUX.2.
+# --- The upstream Qwen-Image-Edit catalogue, kept as a MERGE REFERENCE.
+# --- (none of these entries loads on FLUX.2: a different architecture and keys)
+# --- Do NOT re-enable it as it is: these weights do not load on FLUX.2.
 # EDIT_LORA_SPECS = {
 #     "Multiple-Angles": {
 #         "repo": "dx8152/Qwen-Edit-2509-Multiple-angles",
@@ -75,7 +76,7 @@ EDIT_LORA_SPECS = {
 #         "adapter_name": "multiple-angles",
 #         "prompt": "Rotate the camera 45 degrees to the right.",
 #         "inputs": 1, "base": "2509",
-#         # meme fichier tel que Civitai le nomme (bibliotheques existantes)
+#         # the same file as Civitai names it (the existing libraries)
 #         "local_names": ["Qwen-Edit-2509-Multiple-angles.safetensors"]},
 #     "Photo-to-Anime": {
 #         "repo": "autoweeb/Qwen-Image-Edit-2509-Photo-to-Anime",
@@ -194,7 +195,7 @@ SUBDIR = "_hf-edit"
 
 
 def _apply_config_overrides(specs):
-    """config 'edit_loras': dict nom -> spec (ajout/remplacement) ou null (retrait)."""
+    """config 'edit_loras': a dict name -> spec (an addition/replacement) or null (a removal)."""
     extra = CONFIG.get("edit_loras")
     if not isinstance(extra, dict):
         return specs
@@ -217,12 +218,12 @@ SPECS = _apply_config_overrides(EDIT_LORA_SPECS)
 
 
 def names():
-    """Noms des presets, dans l'ordre du registre."""
+    """The presets' names, in the registry's order."""
     return list(SPECS)
 
 
 def spec(name):
-    """Spec d'un preset (None si inconnu). Tolere l'adapter_name et la casse."""
+    """A preset's spec (None when unknown). It tolerates the adapter_name and the case."""
     if not name:
         return None
     if name in SPECS:
@@ -235,7 +236,7 @@ def spec(name):
 
 
 def canonical_name(name):
-    """Nom du registre pour un nom/adapter_name (None si inconnu)."""
+    """The registry name for a name/adapter_name (None when unknown)."""
     s = spec(name)
     if s is None:
         return None
@@ -246,13 +247,13 @@ def canonical_name(name):
 
 
 def edit_loras_dir():
-    """Dossier des LoRA d'edition telecharges: config 'edit_loras_dir', sinon
-    <LORAS_DIR>/_hf-edit (LORAS_DIR lu a l'appel: l'UI peut le changer)."""
+    """The folder of the downloaded edit LoRAs: the 'edit_loras_dir' config, otherwise
+    <LORAS_DIR>/_hf-edit (LORAS_DIR read at call time: the UI can change it)."""
     d = (CONFIG.get("edit_loras_dir") or "").strip()
     if d:
         return d
-    # LORAS_DIR SANS importer cz_pipeline (torch): caps du protocole doit rester
-    # leger. Si le pipeline est deja charge (UI), sa valeur courante prime.
+    # LORAS_DIR WITHOUT importing cz_pipeline (torch): the protocol's caps must stay
+    # light. When the pipeline is already loaded (the UI), its current value wins.
     import sys
     cp = sys.modules.get("cz_pipeline")
     base = getattr(cp, "LORAS_DIR", None) if cp is not None else None
@@ -264,7 +265,7 @@ def edit_loras_dir():
 
 
 def local_path(name):
-    """Chemin local attendu du preset (existant ou non)."""
+    """The expected local path of the preset (whether it exists or not)."""
     s = spec(name)
     if s is None:
         return None
@@ -272,14 +273,14 @@ def local_path(name):
 
 
 def _candidates(s):
-    """Noms de fichier sous lesquels un preset peut deja exister dans une bibliotheque."""
+    """The file names under which a preset may already exist in a library."""
     return ([s["adapter_name"] + ".safetensors", os.path.basename(s["weights"])]
             + list(s.get("local_names") or []))
 
 
 def available_path(name, index=None):
-    """Chemin local du preset s'il est deja sur disque (dossier _hf-edit OU une
-    bibliotheque LoRA, ex. copie Civitai), sinon None. Ne telecharge jamais."""
+    """The local path of the preset when it is already on disk (the _hf-edit folder OR a
+    LoRA library, a Civitai copy say), otherwise None. It never downloads."""
     s = spec(name)
     if s is None:
         return None
@@ -294,17 +295,17 @@ def is_downloaded(name, index=None):
 
 
 def resolve(name, download=True, progress=None):
-    """Chemin local du LoRA du preset; le telecharge du hub si absent (et
-    download=True). Leve FileNotFoundError si absent et download=False,
-    RuntimeError si le telechargement echoue."""
+    """The local path of the preset's LoRA; it downloads it from the hub when absent (and
+    download=True). Raises FileNotFoundError when absent and download=False,
+    RuntimeError when the download fails."""
     s = spec(name)
     if s is None:
         raise KeyError(f"unknown edit LoRA preset: {name!r} (known: {', '.join(SPECS)})")
     dst = local_path(name)
     if os.path.isfile(dst):
         return dst
-    # Deja dans une bibliotheque LoRA (principal ou extras, ex. copie Civitai) ?
-    # -> on l'utilise sans rien telecharger.
+    # Already in a LoRA library (the main one or the extras, a Civitai copy say) ?
+    # -> we use it without downloading anything.
     found = find_local(_candidates(s))
     if found:
         _dbg(f"edit LoRA {name}: using existing file {found}")
@@ -315,8 +316,8 @@ def resolve(name, download=True, progress=None):
 
 
 def lora_dirs():
-    """Dossiers LoRA (principal + extras) SANS importer cz_pipeline si absent (torch):
-    memes priorites env > preferences > config que cz_pipeline."""
+    """The LoRA folders (the main one + the extras) WITHOUT importing cz_pipeline when it
+    is absent (torch): the same priorities env > preferences > config as cz_pipeline."""
     import sys
     cp = sys.modules.get("cz_pipeline")
     if cp is not None and hasattr(cp, "_lora_dirs"):
@@ -337,9 +338,9 @@ def lora_dirs():
 
 
 def local_index():
-    """{nom_de_fichier_minuscule: chemin} de tous les .safetensors des dossiers LoRA
-    (principal d'abord: il gagne sur un meme nom). Un seul parcours disque, a passer
-    a find_local / is_downloaded / catalog quand on interroge plusieurs presets."""
+    """{lowercase_file_name: path} of every .safetensors of the LoRA folders (the main one
+    first: it wins on an equal name). A single disk walk, to be passed to find_local /
+    is_downloaded / catalog when several presets are queried."""
     idx = {}
     for d in lora_dirs():
         if not os.path.isdir(d):
@@ -353,8 +354,8 @@ def local_index():
 
 
 def find_local(filenames, index=None):
-    """Premier fichier dont le nom (insensible a la casse) figure dans `filenames`,
-    cherche dans les dossiers LoRA (index = local_index() deja construit). None si absent."""
+    """The first file whose name (case-insensitive) is in `filenames`, looked for in the
+    LoRA folders (index = a local_index() already built). None when absent."""
     if index is None:
         index = local_index()
     for f in filenames:
@@ -365,19 +366,19 @@ def find_local(filenames, index=None):
 
 
 # ----------------------------------------------------------------------------
-# Mode rapide: LoRA Lightning (distillation) pour l'edition, 4 ou 8 steps, CFG off.
-# Le fichier depend de la revision du modele d'edition (2509 / 2511): choisi d'apres
-# le nom du modele omni. Cherche d'abord dans les dossiers LoRA (les bibliotheques
-# Civitai ont souvent deja la 8-steps), sinon telecharge (repo lightx2v, 2509 = gated:
-# un hf_token est necessaire).
+# The fast mode: a Lightning LoRA (distillation) for editing, 4 or 8 steps, CFG off.
+# The file depends on the edit model's revision (2509 / 2511): chosen from the omni
+# model's name. Looked for in the LoRA folders first (the Civitai libraries often have
+# the 8-step one already), otherwise downloaded (the lightx2v repo, 2509 = gated: an
+# hf_token is needed).
 # ----------------------------------------------------------------------------
 AUTO_SPEED = "Auto (model profile)"
-# Presets Lightning: VIDES chez klein. Ces LoRA sont des accelerateurs pour
-# Qwen-Image-Edit (architecture differente) ET klein est DEJA distille a 4 steps:
-# il n'y a rien a accelerer. 'Edit speed' se reduit donc a 'Off'.
+# The Lightning presets: EMPTY on klein. Those LoRAs are accelerators for
+# Qwen-Image-Edit (a different architecture) AND klein is ALREADY distilled to 4 steps:
+# there is nothing to accelerate. So 'Edit speed' comes down to 'Off'.
 SPEED_SPECS = {}
 
-# --- Reference de merge (amont Qwen). Ne PAS reactiver: incompatible FLUX.2.
+# --- A merge reference (upstream Qwen). Do NOT re-enable: incompatible with FLUX.2.
 # SPEED_SPECS = {
 #     "Lightning 4 steps": {
 #         "steps": 4, "guidance": 1.0,
@@ -397,23 +398,23 @@ SPEED_SPECS = {}
 
 
 def speed_names():
-    """Choix du dropdown 'Edit speed' (sans 'Off', ajoute par cz_pipeline).
+    """The choices of the 'Edit speed' dropdown (without 'Off', added by cz_pipeline).
 
-    Vide chez klein: le modele est deja distille a 4 steps et il n'existe pas de LoRA
-    Lightning FLUX.2 a empiler. Le dropdown se reduit donc a 'Off' cote cz_pipeline,
-    et caps.edit_fast n'annonce plus de mode qui echouerait."""
+    Empty on klein: the model is already distilled to 4 steps and there exists no FLUX.2
+    Lightning LoRA to stack. So the dropdown comes down to 'Off' on the cz_pipeline side,
+    and caps.edit_fast no longer announces a mode that would fail."""
     return []
 
 
 def edit_base_revision(omni_model):
-    """'2511' si le modele d'edition est un 2511, sinon '2509' (Plus)."""
+    """'2511' when the edit model is a 2511, otherwise '2509' (Plus)."""
     return "2511" if "2511" in str(omni_model or "") else "2509"
 
 
 def resolve_speed(name, omni_model, download=True):
-    """{"name", "steps", "guidance", "path", "base"} pour un mode Lightning: la LoRA
-    est prise dans les dossiers LoRA si presente, sinon telechargee dans edit_loras_dir.
-    KeyError si le nom est inconnu."""
+    """{"name", "steps", "guidance", "path", "base"} for a Lightning mode: the LoRA is
+    taken from the LoRA folders when present, otherwise downloaded into edit_loras_dir.
+    KeyError when the name is unknown."""
     key = None
     for k in SPEED_SPECS:
         if k.lower() == str(name or "").strip().lower():
@@ -437,7 +438,7 @@ def resolve_speed(name, omni_model, download=True):
 
 
 def _download(s, dst, progress=None):
-    """hf_hub_download -> copie atomique vers dst (nom ASCII stable)."""
+    """hf_hub_download -> an atomic copy to dst (a stable ASCII name)."""
     import shutil
     from huggingface_hub import hf_hub_download
     from cz_core import _apply_hf_token
@@ -460,21 +461,21 @@ def _download(s, dst, progress=None):
 
 
 def status_label(name, index=None):
-    """Libelle pour l'UI: 'Nom ✓' si deja sur disque (dossier _hf-edit ou une
-    bibliotheque LoRA), 'Nom ⬇' sinon."""
+    """The label for the UI: 'Name ✓' when it is on disk already (the _hf-edit folder or a
+    LoRA library), 'Name ⬇' otherwise."""
     return f"{name} {'✓' if is_downloaded(name, index=index) else '⬇'}"
 
 
 def strip_label(label):
-    """Inverse de status_label (le dropdown renvoie le libelle)."""
+    """The inverse of status_label (the dropdown returns the label)."""
     if not label:
         return ""
     return str(label).rstrip(" ✓⬇").strip()
 
 
 def catalog():
-    """Liste legere pour caps / UI: [{name, adapter_name, repo, prompt, inputs,
-    base, downloaded}] - sans rien telecharger."""
+    """A light list for caps / the UI: [{name, adapter_name, repo, prompt, inputs,
+    base, downloaded}] - without downloading anything."""
     idx = local_index()
     return [{"name": n, "adapter_name": s["adapter_name"], "repo": s["repo"],
              "prompt": s.get("prompt", ""), "inputs": int(s.get("inputs", 1)),

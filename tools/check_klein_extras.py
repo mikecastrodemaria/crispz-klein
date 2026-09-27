@@ -17,8 +17,8 @@ import sys
 import urllib.parse
 import urllib.request
 
-# Recherches HF, pas des repos figes: personne ne sait sous quel nom ces modeles
-# sortiront. On interroge l'API de recherche et on filtre sur le nom.
+# HF searches, not fixed repos: nobody knows under what name those models will come
+# out. We query the search API and filter on the name.
 QUERIES = [
     ("ControlNet FLUX.2 Klein", "flux.2 klein controlnet"),
     ("Edit LoRA FLUX.2 Klein", "flux.2 klein edit lora"),
@@ -33,7 +33,7 @@ def search(q, limit=5, timeout=10):
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return [m.get("id") for m in json.load(r)]
     except Exception:
-        return []          # reseau / 4xx -> traite comme "rien trouve"
+        return []          # network / 4xx -> treated as "nothing found"
 
 
 def main():

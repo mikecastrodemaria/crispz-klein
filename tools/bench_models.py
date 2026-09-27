@@ -1,51 +1,51 @@
-"""Banc d'essai: chaque modele de la bibliotheque, trois images, temps mesures.
+"""A bench: every model of the library, three images, timings measured.
 
-Ce qu'il separe -- et c'est tout l'interet, parce que ces trois nombres n'ont pas la
-meme cause et ne se corrigent pas pareil:
+What it separates -- and that is the whole point, because those three numbers do not
+have the same cause and are not fixed the same way:
 
-  CHARGEMENT   pipeline pret a generer, depuis un etat vide (free_vram avant chaque
-               modele, sinon on mesurerait un echange de transformer a chaud, pas un
-               chargement). C'est la que se paient la lecture disque, la
-               dequantification FP8/INT8 -- ou son cache, cf. rebuild_cache.bat -- et
-               la mise en place de l'offload.
-  1re IMAGE    la premiere generation APRES chargement. Toujours plus lente: noyaux
-               CUDA a compiler, cache d'embeddings vide, poids qui montent sur le GPU.
-               La confondre avec le regime etabli fait conclure "ce modele est lent"
-               sur un cout paye une seule fois (vu dans cette maison: 616 s annonces
-               pour un modele qui tournait a 9.6 s au coup suivant).
-  REGIME       la moyenne des images suivantes. Le seul chiffre qui vaut pour un
-               travail reel, et le seul comparable entre modeles.
+  LOADING      the pipeline ready to generate, from an empty state (free_vram before
+               every model, otherwise we would be measuring a warm transformer swap, not
+               a load). That is where the disk read, the FP8/INT8 dequantisation -- or
+               its cache, see rebuild_cache.bat -- and the setting up of the offload get
+               paid for.
+  1st IMAGE    the first generation AFTER loading. Always slower: CUDA kernels to
+               compile, an empty embeddings cache, weights moving onto the GPU.
+               Confusing it with the steady state makes one conclude "this model is
+               slow" over a cost paid only once (seen in this house: 616 s announced
+               for a model that ran at 9.6 s on the next go).
+  STEADY STATE the average of the images that follow. The only figure that counts for
+               real work, and the only one comparable between models.
 
-Les deux variantes sont couvertes. Un checkpoint 4B ne se charge pas sur une base 9B:
-les modeles sont donc groupes par variante et le repo de base est bascule une fois par
-groupe (un changement de base est un rechargement complet, on n'en paie pas un par
-fichier).
+Both variants are covered. A 4B checkpoint does not load on a 9B base: so the models are
+grouped by variant and the base repo is switched once per group (a base change is a full
+reload, we do not pay one per file).
 
-Les steps viennent du PROFIL DE CHAQUE MODELE (consensus CivitAI, drapeau undistilled,
-puis nom de fichier -- la logique de la selection dans l'UI), pas d'une valeur unique:
-c'est le temps qu'un modele met a rendre une image utilisable qui interesse, pas un
-temps par step artificiellement egalise. Le cout PAR STEP est reporte a cote, pour qui
-veut l'autre lecture. --steps N force la meme valeur partout si on veut la comparaison
-brute.
+The steps come from EVERY MODEL'S PROFILE (the CivitAI consensus, the undistilled flag,
+then the file name -- the logic of the selection in the UI), not from a single value:
+what is of interest is the time a model takes to render a usable image, not a time per
+step artificially levelled. The cost PER STEP is reported next to it, for whoever wants
+the other reading. --steps N forces the same value everywhere when the raw comparison is
+wanted.
 
 Usage:
     .venv/Scripts/python tools/bench_models.py --list
     .venv/Scripts/python tools/bench_models.py
-    (ou double-clic sur bench_models.bat)
+    (or double-click on bench_models.bat)
 
-  --list          montre le plan, ne genere rien
-  --only SUBSTR   filtre sur le nom de fichier (repetable, insensible a la casse)
-  --size WxH      resolution (defaut 1024x1024). La MEME pour tous: le modele doit
-                  etre la seule variable.
-  --seed N        graine (defaut 12345), identique partout -> images comparables
-  --steps N       force le meme nombre de steps pour tous
-  --resume        saute les modeles deja dans bench/results.json
+  --list          shows the plan, generates nothing
+  --only SUBSTR   filters on the file name (repeatable, case-insensitive)
+  --size WxH      the resolution (1024x1024 by default). The SAME for all: the model
+                  must be the only variable.
+  --seed N        the seed (12345 by default), identical everywhere -> comparable images
+  --steps N       forces the same number of steps for all
+  --resume        skips the models already in bench/results.json
 
-REPRISE: chaque modele est ecrit dans bench/results.json des qu'il est fini, et le
-rapport est reecrit dans la foulee. Une coupure ne perd que le modele en cours.
+RESUMING: every model is written into bench/results.json as soon as it is finished, and
+the report is rewritten right after. An interruption only loses the model in progress.
 
-LE GPU DOIT ETRE LIBRE. Ce banc charge un modele complet par entree; une instance de
-l'app qui tourne a cote fera au mieux ralentir la mesure, au pire deborder la VRAM.
+THE GPU MUST BE FREE. This bench loads a complete model per entry; an instance of the app
+running alongside will at best slow the measurement down, at worst overflow the VRAM.
+
 """
 import json
 import os
@@ -106,9 +106,9 @@ OUT = os.path.join(HERE, "bench")
 RESULTS = os.path.join(OUT, "results.json")
 REPORT = os.path.join(OUT, "REPORT.md")
 
-# Trois images franchement differentes: un visage (la peau et les yeux sont ce qui
-# trahit un merge casse en premier), une scene large (composition, profondeur), et du
-# TEXTE (ce que FLUX.2 sait faire et qu'une fusion ratee detruit avant tout le reste).
+# Three frankly different images: a face (the skin and the eyes are what betrays a
+# broken merge first), a wide scene (composition, depth), and TEXT (what FLUX.2 can do
+# and what a failed fusion destroys before anything else).
 PROMPTS = [
     ("portrait",
      "portrait of a young woman with long dark hair, hoop earrings, scarf, "
@@ -126,10 +126,10 @@ PROMPTS = [
 
 
 def _variant(path):
-    """'4B' / '9B' / None pour un fichier; pour un repo, ce que dit sa config.
+    """'4B' / '9B' / None for a file; for a repo, what its config says.
 
-    Le GGUF a son propre lecteur: sans lui un GGUF 4B ressortait sans variante, donc
-    apparie a la base courante -- et un 4B teste sur une base 9B echoue toujours."""
+    The GGUF has its own reader: without it a 4B GGUF came out with no variant, so
+    paired with the current base -- and a 4B tested on a 9B base always fails."""
     if os.path.isfile(path):
         dim = (P._gguf_hidden_dim(path) if P._is_gguf_path(path)
                else P._flux2_hidden_dim(path))
@@ -138,8 +138,8 @@ def _variant(path):
 
 
 def _plan():
-    """[(etiquette, chemin_ou_repo, variante, raison_de_refus)] -- les refus sont
-    gardes dans le plan pour etre AFFICHES, pas silencieusement absents."""
+    """[(label, path_or_repo, variant, reason_for_refusal)] -- the refusals are kept in
+    the plan to be DISPLAYED, not silently absent."""
     items = []
     for repo in getattr(U, "ZIMAGE_BASE_REPOS", []) or []:
         items.append((os.path.basename(repo), repo, _variant(repo), None))
@@ -156,33 +156,33 @@ def _plan():
             var = _variant(p)
             why = None
             if f.lower().endswith(".safetensors"):
-                # Le refus de VARIANTE ne compte pas: on basculera la base pour lui.
+                # A VARIANT refusal does not count: we will switch the base for it.
                 why = P._safetensors_unsupported(p)
                 if why and why == P._flux2_variant_mismatch(P._flux2_hidden_dim(p)):
                     why = None
             elif f.lower().endswith(".gguf"):
-                # Meme regle pour le GGUF. La premiere version ne verifiait le layout
-                # que des .safetensors: deux GGUF convertis par stable-diffusion.cpp
-                # ont ete TENTES, puis refuses au chargement par la garde de l'app. On
-                # le dit des le plan, comme pour tout autre fichier que l'app refuse.
+                # The same rule for the GGUF. The first version only checked the layout
+                # of the .safetensors: two GGUFs converted by stable-diffusion.cpp were
+                # ATTEMPTED, then refused at load time by the app's guard. We say so from
+                # the plan on, as for any other file the app refuses.
                 why = P._gguf_layout_unsupported(p) or None
-                # ... mais comme pour les .safetensors, le refus de VARIANTE ne compte
-                # pas: le banc bascule la base par groupe. Sans cette ligne, une base
-                # en 4B ecartait les trois GGUF 9B du plan -- verifie, 22 modeles au
-                # lieu de 25.
+                # ... but as for the .safetensors, a VARIANT refusal does not count:
+                # the bench switches the base per group. Without that line, a 4B base
+                # discarded the three 9B GGUFs from the plan -- checked, 22 models instead
+                # of 25.
                 if why and why == P._flux2_variant_mismatch(P._gguf_hidden_dim(p)):
                     why = None
             items.append((f, p, var, why))
     if ONLY:
         items = [it for it in items if any(s in it[0].lower() for s in ONLY)]
-    # Groupe par variante -> une seule bascule de repo de base par groupe.
+    # Grouped by variant -> a single base repo switch per group.
     order = {"4B": 0, "9B": 1, None: 2}
     items.sort(key=lambda it: (order.get(it[2], 3), it[0].lower()))
     return items
 
 
 def _base_for(variant):
-    """Le repo de base a poser pour tester cette variante."""
+    """The base repo to set in order to test this variant."""
     for repo in getattr(U, "ZIMAGE_BASE_REPOS", []) or []:
         if _variant(repo) == variant:
             return repo
@@ -190,16 +190,16 @@ def _base_for(variant):
 
 
 def _dequant_state(path):
-    """'chaud' / 'froid' / '-' : l'etat du cache de dequantification AVANT le test.
+    """'warm' / 'cold' / '-' : the state of the dequantisation cache BEFORE the test.
 
-    Sans cette colonne la ligne CHARGEMENT est ininterpretable: le meme fichier met
-    quelques secondes avec son bf16 en cache et plusieurs MINUTES sans. Comparer un
-    modele cache a un modele qui ne l'est pas ne mesure pas les modeles."""
+    Without that column the LOADING line cannot be interpreted: the same file takes a
+    few seconds with its bf16 in the cache and several MINUTES without. Comparing a
+    cached model with one that is not does not measure the models."""
     if not os.path.isfile(path) or not str(path).lower().endswith(".safetensors"):
         return "-"
     try:
         if not P._safetensors_dequant(path):
-            return "-"                      # bf16: rien a dequantifier
+            return "-"                      # bf16: nothing to dequantise
         c = P._dequant_cache_path(path)
         return "chaud" if c and os.path.isfile(c) else "froid"
     except Exception:
@@ -207,8 +207,8 @@ def _dequant_state(path):
 
 
 def _profile(path):
-    """(steps, guidance, source) pour ce modele -- la meme logique que la selection
-    dans l'UI, pour que le banc mesure ce que l'utilisateur obtiendra vraiment."""
+    """(steps, guidance, source) for this model -- the same logic as the selection in the
+    UI, so that the bench measures what the user will really get."""
     if FORCE_STEPS:
         return FORCE_STEPS, 1.0, f"forced (--steps {FORCE_STEPS})"
     if not os.path.isfile(path):
@@ -224,7 +224,7 @@ def _profile(path):
 
 
 def _load(prev):
-    """Charge la liste des resultats deja obtenus."""
+    """Loads the list of the results already obtained."""
     if prev and os.path.isfile(RESULTS):
         try:
             return json.load(open(RESULTS, encoding="utf-8"))
@@ -294,25 +294,24 @@ def _write_report(rows):
 
 
 def _bench_one(name, path, variant):
-    """Mesure un modele. Renvoie la ligne de resultat (avec 'error' si echec)."""
+    """Measures a model. Returns the result row (with 'error' on a failure)."""
     steps, guidance, src = _profile(path)
     row = {"name": name, "variant": variant, "steps": steps, "guidance": guidance,
            "profile_source": src, "dequant_cache": _dequant_state(path)}
-    # Base de la bonne variante d'abord (rechargement complet), puis le transformer.
+    # The base of the right variant first (a full reload), then the transformer.
     base = _base_for(variant) or P.BASE_REPO
     if base != P.BASE_REPO:
         print(f"    base repo -> {base}")
         P.set_zimage_model(base)
     P.set_zimage_transformer(path if os.path.isfile(path) else None)
-    # Le modele SEUL: aucune LoRA, aucune LoKr, aucun jeu d'edition. LORAS est
-    # initialise depuis `default_loras` au demarrage de l'app; sans cette remise a
-    # zero le banc mesurerait la config du jour et non le modele -- une LoKr fusionnee
-    # ajoute ~24 s a chaque chargement, change chaque image, et un 9B pose sur une
-    # base 4B y deverserait ses avertissements.
+    # The model ALONE: no LoRA, no LoKr, no edit set. LORAS is initialised from
+    # `default_loras` when the app starts; without that reset the bench would measure the
+    # config of the day and not the model -- a merged LoKr adds ~24 s to every load,
+    # changes every image, and a 9B set on a 4B base would pour its warnings in there.
     P.LORAS = []
     P.EDIT_LORAS = []
-    # Etat vide AVANT la mesure: sinon on mesurerait un echange de transformer a
-    # chaud (VAE + encodeur gardes), pas un chargement.
+    # An empty state BEFORE the measurement: otherwise we would be measuring a warm
+    # transformer swap (the VAE + the encoder kept), not a load.
     P.free_vram()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -361,8 +360,8 @@ def main():
         dq = _dequant_state(p)
         extra = why or (f"{var or '?'}, {st} steps ({src})"
                         + (f", dequant {dq}" if dq != "-" else ""))
-        # Sans signature de variante on ne sait pas a quelle base l'apparier: il passe
-        # en DERNIER (le tri le place en fin) et on le dit, plutot que de le jeter.
+        # With no variant signature we do not know which base to pair it with: it goes
+        # LAST (the sort puts it at the end) and we say so, rather than throwing it away.
         if not why and var is None:
             extra += "  [pas de signature de variante -> base courante, peut echouer]"
         print(f"{mark} {n[:44]:46s} {extra[:96]}")
@@ -391,7 +390,7 @@ def main():
             traceback.print_exc(limit=3)
             rows.append({"name": name, "variant": var, "steps": 0, "guidance": 0,
                          "profile_source": "-", "error": f"{type(e).__name__}: {e}"})
-        # Ecrit APRES CHAQUE modele: une coupure ne perd que celui en cours.
+        # Written AFTER EVERY model: an interruption only loses the one in progress.
         os.makedirs(OUT, exist_ok=True)
         with open(RESULTS, "w", encoding="utf-8", newline="") as f:
             json.dump(rows, f, indent=1)
