@@ -75,8 +75,13 @@ def test_the_ignored_guidance_is_announced_once():
         _guidance(4.0, None)
     finally:
         P._log = real
-    assert len(said) == 1, f"{len(said)} lines for the same value"
-    assert "4" in said[0] and "distille" in said[0], said[0]
+    # Filtered, NOT counted raw: _log carries everything, and an unrelated line (the
+    # offload restore message this machine's config produces) would fail a test about
+    # guidance. The point is that the SAME ignored value is announced once, not that
+    # nothing else is ever logged.
+    said = [m for m in said if "guidance" in m]
+    assert len(said) == 1, f"{len(said)} guidance lines for the same value"
+    assert "4" in said[0] and "distilled" in said[0], said[0]
     P._CFG_IGNORED_SAID.clear()
     print("OK test_the_ignored_guidance_is_announced_once")
 
