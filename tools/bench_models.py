@@ -201,7 +201,7 @@ def _dequant_state(path):
         if not P._safetensors_dequant(path):
             return "-"                      # bf16: nothing to dequantise
         c = P._dequant_cache_path(path)
-        return "chaud" if c and os.path.isfile(c) else "froid"
+        return "warm" if c and os.path.isfile(c) else "cold"
     except Exception:
         return "-"
 
@@ -238,36 +238,35 @@ def _write_report(rows):
     ok.sort(key=lambda r: (r.get("warm_s") is None, r.get("warm_s") or 0))
     w, h = SIZE
     lines = [
-        "# Banc d'essai des modeles",
+        "# Model bench",
         "",
-        f"{w}x{h}, seed {SEED}, {len(PROMPTS)} images par modele "
+        f"{w}x{h}, seed {SEED}, {len(PROMPTS)} images per model "
         f"({', '.join(n for n, _ in PROMPTS)}).",
         "",
-        "- **Chargement**: pipeline pret, depuis un etat vide (`free_vram` avant chaque",
-        "  modele). Lecture disque + dequantification + offload.",
-        "- **1re image**: la premiere apres chargement -- noyaux CUDA, cache d'embeddings",
-        "  vide. Cout paye une fois, a ne pas confondre avec le regime.",
-        "- **Regime**: moyenne des images suivantes. Le seul chiffre comparable.",
-        "- **Modeles nus**: aucune LoRA ni LoKr, quelle que soit la config du moment.",
-        "- **Jusqu'a la 1re image** = chargement + 1re image. A LIRE EN PREMIER: sous",
-        "  offload les poids restent mappes sur le disque et la lecture glisse du",
-        "  chargement dans la 1re image (mesure: 4 s + 173 s pour un 9B bf16 sur disque",
-        "  USB). Chacune de ces deux colonnes, seule, trompe; leur somme non.",
-        "- **s/step** = regime / steps. Surestime le cout d'un step sous offload: une",
-        "  part fixe par image (~6,5 s sur le 9B, transferts + VAE) y est repartie.",
+        "- **Load**: the pipeline ready, from an empty state (`free_vram` before every",
+        "  model). Disk read + dequantisation + offload.",
+        "- **First image**: the first one after loading -- CUDA kernels and the embedding",
+        "  cache both cold. A cost paid once, not to be confused with the steady state.",
+        "- **Steady**: the mean of the following images. The only comparable figure.",
+        "- **Bare models**: no LoRA and no LoKr, whatever the current config says.",
+        "- **To the first image** = load + first image. READ THIS FIRST: under offload the",
+        "  weights stay mapped on disk and the reading slides out of the load and into the",
+        "  first image (measured: 4 s + 173 s for a 9B bf16 on a USB disk). Either of",
+        "  those two columns alone misleads; their sum does not.",
+        "- **s/step** = steady / steps. It overstates the cost of one step under offload: a",
+        "  fixed per-image part (~6.5 s on the 9B, transfers + VAE) is spread into it.",
         "",
-        "- **Cache**: etat du cache de dequantification AVANT le test. `froid` = le",
-        "  chargement inclut la conversion FP8/INT8 vers bf16 (minutes). Une colonne",
-        "  `chargement` ne se compare qu'a cache egal -- `rebuild_cache.bat` les met",
-        "  tous a chaud.",
+        "- **Cache**: the state of the dequantisation cache BEFORE the test. `cold` = the",
+        "  load includes the FP8/INT8 -> bf16 conversion (minutes). A `load` column only",
+        "  compares at equal cache -- `rebuild_cache.bat` makes them all warm.",
         "",
-        "> Le cache fichier de l'OS pese aussi sur la colonne `chargement`: le meme",
-        "> modele, mesure deux fois de suite, est passe de 24.1 s a 10.3 s sans qu'on",
-        "> touche a rien. Le premier modele de la liste paie donc un disque froid que",
-        "> les suivants ne paient pas. Lire cette colonne comme un ordre de grandeur,",
-        "> pas au dixieme de seconde -- `1re image` et `regime`, eux, sont fiables.",
+        "> The OS file cache weighs on the `load` column too: the same model, measured",
+        "> twice in a row, went from 24.1 s to 10.3 s with nothing else touched. So the",
+        "> first model of the list pays for a cold disk the next ones do not. Read that",
+        "> column as an order of magnitude, not to the tenth of a second -- `first image`",
+        "> and `steady`, on the other hand, are reliable.",
         "",
-        "| Modele | Var. | Steps (source) | Cache | Chargement | 1re image | Jusqu'a la 1re | Regime | s/step | VRAM max |",
+        "| Model | Var. | Steps (source) | Cache | Load | First image | To the first | Steady | s/step | Peak VRAM |",
         "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in ok:
@@ -279,14 +278,14 @@ def _write_report(rows):
             f"{r['load_s']:.1f} s | {r['first_s']:.1f} s | "
             f"**{r['load_s'] + r['first_s']:.0f} s** | "
             + (f"{warm:.1f} s" if warm else "-")
-            + f" | {per} | {r.get('vram_peak_gb', 0):.1f} Go |")
+            + f" | {per} | {r.get('vram_peak_gb', 0):.1f} GB |")
     bad = [r for r in rows if r.get("error")]
     if bad:
-        lines += ["", "## Non testes", "",
-                  "| Modele | Raison |", "|---|---|"]
+        lines += ["", "## Not tested", "",
+                  "| Model | Reason |", "|---|---|"]
         for r in bad:
             lines.append(f"| `{r['name']}` | {str(r['error'])[:160]} |")
-    lines += ["", f"_Genere le {time.strftime('%Y-%m-%d %H:%M')} par "
+    lines += ["", f"_Generated on {time.strftime('%Y-%m-%d %H:%M')} by "
                   f"`tools/bench_models.py`._", ""]
     os.makedirs(OUT, exist_ok=True)
     with open(REPORT, "w", encoding="utf-8", newline="") as f:
@@ -321,7 +320,7 @@ def _bench_one(name, path, variant):
     t0 = time.time()
     P.get_pipe("txt2img")
     row["load_s"] = time.time() - t0
-    print(f"    chargement {row['load_s']:.1f} s")
+    print(f"    load {row['load_s']:.1f} s")
 
     times, outdir = [], os.path.join(OUT, name.replace(os.sep, "_"))
     os.makedirs(outdir, exist_ok=True)
@@ -335,8 +334,8 @@ def _bench_one(name, path, variant):
         try:
             img.save(os.path.join(outdir, f"{i + 1}_{label}.png"))
         except Exception as e:
-            print(f"    (image {label} non sauvee: {e})")
-        print(f"    {label}: {dt:.1f} s" + ("  <- 1re" if i == 0 else ""))
+            print(f"    (image {label} not saved: {e})")
+        print(f"    {label}: {dt:.1f} s" + ("  <- first" if i == 0 else ""))
     row["first_s"] = times[0]
     row["warm_s"] = statistics.fmean(times[1:]) if len(times) > 1 else None
     row["times_s"] = times
@@ -352,10 +351,10 @@ def main():
     skipped = [it for it in items if it[3]]
 
     print(f"resolution {SIZE[0]}x{SIZE[1]} | seed {SEED} | "
-          f"{len(PROMPTS)} images par modele")
+          f"{len(PROMPTS)} images per model")
     for n, p, var, why in items:
-        mark = ("DEJA FAIT " if n in done else
-                "REFUSE     " if why else "A TESTER   ")
+        mark = ("DONE       " if n in done else
+                "REFUSED    " if why else "TO TEST    ")
         st, _g, src = (FORCE_STEPS, 1.0, "forced") if FORCE_STEPS else _profile(p)
         dq = _dequant_state(p)
         extra = why or (f"{var or '?'}, {st} steps ({src})"
@@ -363,17 +362,17 @@ def main():
         # With no variant signature we do not know which base to pair it with: it goes
         # LAST (the sort puts it at the end) and we say so, rather than throwing it away.
         if not why and var is None:
-            extra += "  [pas de signature de variante -> base courante, peut echouer]"
+            extra += "  [no variant signature -> the current base, may fail]"
         print(f"{mark} {n[:44]:46s} {extra[:96]}")
-    print(f"\n{len(todo)} modele(s) a tester, {len(skipped)} refuse(s), "
-          f"{len(done)} deja fait(s).")
+    print(f"\n{len(todo)} model(s) to test, {len(skipped)} refused, "
+          f"{len(done)} already done.")
     if skipped:
-        print("Les refuses ne sont pas des echecs du banc: ce sont des fichiers que "
-              "l'app ne charge pas (LoRA egaree, FP4, LyCORIS...), avec leur raison.")
+        print("A refusal is not a bench failure: those are files the app does not "
+              "load (a stray LoRA, FP4, LyCORIS...), each with its reason.")
     if torch.cuda.is_available():
         free, total = torch.cuda.mem_get_info()
-        print(f"GPU: {free / 1024**3:.1f} Go libres sur {total / 1024**3:.1f}. "
-              "Ferme l'app avant de lancer, sinon la mesure ne vaut rien.")
+        print(f"GPU: {free / 1024**3:.1f} GB free out of {total / 1024**3:.1f}. "
+              "Close the app before running, or the measurement is worthless.")
     if LIST_ONLY or not todo:
         return
 
@@ -383,10 +382,10 @@ def main():
         try:
             rows.append(_bench_one(name, path, var))
         except KeyboardInterrupt:
-            print("interrompu")
+            print("interrupted")
             break
         except Exception as e:
-            print(f"    ECHEC {type(e).__name__}: {e}")
+            print(f"    FAILED {type(e).__name__}: {e}")
             traceback.print_exc(limit=3)
             rows.append({"name": name, "variant": var, "steps": 0, "guidance": 0,
                          "profile_source": "-", "error": f"{type(e).__name__}: {e}"})
@@ -397,7 +396,7 @@ def main():
         _write_report(rows)
 
     _write_report(rows)
-    print(f"\nRapport: {REPORT}\nImages : {OUT}")
+    print(f"\nReport: {REPORT}\nImages: {OUT}")
 
 
 if __name__ == "__main__":

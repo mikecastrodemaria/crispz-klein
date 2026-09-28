@@ -63,7 +63,7 @@ def test_a_4B_checkpoint_is_refused_only_for_its_variant():
     dim = P._flux2_hidden_dim(p)
     assert dim == 3072, dim
     why = P._safetensors_unsupported(p)
-    assert why, "un 4B doit etre refuse tant que la base tourne en 9B"
+    assert why, "a 4B must be refused while the base runs as a 9B"
     assert why == P._flux2_variant_mismatch(dim), why
     # ... and it stays perfectly dequantisable.
     assert P._safetensors_dequant(p) == "FP8 scaled", P._safetensors_dequant(p)

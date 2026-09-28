@@ -88,14 +88,14 @@ def test_the_cache_key_changes_only_for_prescaled_files():
         P._DQ_CACHE_CFG = cache
         assert P._dequant_cache_path(pre) != P._dequant_cache_path(pre, legacy=True)
         assert P._dequant_cache_path(reg) == P._dequant_cache_path(reg, legacy=True), \
-            "un fichier normal perdrait son cache pour rien"
+            "a normal file would lose its cache for nothing"
         # the new cache written, the old (wrong) one of the same file disappears
         stale = P._dequant_cache_path(pre, legacy=True)
         with open(stale, "wb") as f:
             f.write(b"x")
         P._dequant_cache_store(pre, {"x": torch.zeros(1)})
         assert os.path.isfile(P._dequant_cache_path(pre))
-        assert not os.path.exists(stale), "cache faux laisse sur le disque"
+        assert not os.path.exists(stale), "a wrong cache left on the disk"
     finally:
         P._DQ_CACHE_CFG = old
     print("OK test_the_cache_key_changes_only_for_prescaled_files")

@@ -73,7 +73,7 @@ def test_an_unreadable_signature_trims_nothing():
     assert P._encoder_layers_used(p) is None
     P._trim_text_encoder(p)
     assert len(p.text_encoder.model.layers) == 36
-    assert P._ENCODER_TRIMMED is False, "le budget ne doit rien defalquer"
+    assert P._ENCODER_TRIMMED is False, "the budget must deduct nothing"
     print("OK test_an_unreadable_signature_trims_nothing")
 
 
@@ -128,9 +128,9 @@ def test_a_trimmed_9B_still_gets_the_offload_it_needs():
     P.DEVICE = "cuda"
     try:
         P._total_vram_gb = lambda: 31.8
-        assert P._effective_offload() == "model", "32 Go: il faut garder l'offload"
+        assert P._effective_offload() == "model", "32 GB: the offload must be kept"
         P._total_vram_gb = lambda: 48.0
-        assert P._effective_offload() == "none", "48 Go: la, ca tient vraiment"
+        assert P._effective_offload() == "none", "48 GB: now it really does fit"
     finally:
         (P.BASE_REPO, P._ENCODER_TRIMMED, P.OFFLOAD_MODE, P.DEVICE,
          P._total_vram_gb) = old

@@ -148,7 +148,7 @@ def test_apply_checkpoint_refuses_the_wrong_variant():
         msg = U._apply_checkpoint("big9b.safetensors")[0]
         assert P.ZIMAGE_TRANSFORMER == kept, "un 9B a ete applique sur un install 4B"
         assert "NOT applied" in msg and "9B" in msg, msg
-        assert "good4b" in msg, f"le message doit dire ce qui reste en place: {msg}"
+        assert "good4b" in msg, f"the message must say what stays in place: {msg}"
     _with_lib(check)
     print("OK test_apply_checkpoint_refuses_the_wrong_variant")
 
@@ -192,9 +192,9 @@ def test_preset_never_pushes_a_checkpoint_the_dropdown_refuses():
         status = outs[-1]
         assert "NOT switched" in status and "big9b.safetensors" in status, status
         assert "9B" in status, status
-        assert "good4b" in status, f"doit dire quel modele reste actif: {status}"
+        assert "good4b" in status, f"it must say which model stays active: {status}"
         assert outs[U._PRESET_KEYS.index("steps")].get("value") == 7, \
-            "le reste du preset doit s'appliquer quand meme"
+            "the rest of the preset must apply anyway"
     _with_lib(check)
     print("OK test_preset_never_pushes_a_checkpoint_the_dropdown_refuses")
 
@@ -226,7 +226,7 @@ def test_a_preset_switches_its_own_base_repo():
             assert "Base model switched" in status, status
             # the cost must be announced, not suffered
             assert "next **Generate**" in status and "released" in status, status
-            assert "Non-Commercial" in status, "la note du 9B doit suivre le swap"
+            assert "Non-Commercial" in status, "the 9B's note must follow the swap"
             assert saved.get(P.CFG_MODEL_KEY) == U.KLEIN_BASE_9B, saved
         finally:
             U._save_prefs_keys = real_save
@@ -248,9 +248,9 @@ def test_the_refusal_leads_with_the_action():
         _preset("zz-old", "big9b.safetensors")
         status = U._ui_preset_load("zz-old")[-1]
         head = status.split("Why:")[0]
-        assert "Klein checkpoint" in head, f"l'action doit venir en premier: {head}"
+        assert "Klein checkpoint" in head, f"the action must come first: {head}"
         assert U.KLEIN_BASE_9B in head, head
-        assert "Why:" in status, "le diagnostic doit suivre, pas preceder"
+        assert "Why:" in status, "the diagnosis must follow, not precede"
         # and the lasting repair of the old preset
         assert "Update selected" in status, status
     _with_lib(check)
@@ -281,7 +281,7 @@ def test_both_base_repos_are_selectable_and_the_9b_is_announced():
     say what it costs BEFORE the run: a non-commercial licence, a gated repo, the VRAM."""
     assert U.KLEIN_BASE_4B in U.ZIMAGE_BASE_REPOS
     assert U.KLEIN_BASE_9B in U.ZIMAGE_BASE_REPOS
-    assert P.DEFAULT_BASE_REPO == U.KLEIN_BASE_4B, "le defaut doit rester le 4B"
+    assert P.DEFAULT_BASE_REPO == U.KLEIN_BASE_4B, "the default must stay the 4B"
     note = U.BASE_REPO_NOTES[U.KLEIN_BASE_9B]
     assert "Non-Commercial" in note and "gated" in note and "VRAM" in note, note
     print("OK test_both_base_repos_are_selectable_and_the_9b_is_announced")
@@ -306,12 +306,12 @@ def test_base_swap_refreshes_the_checkpoint_list():
             out = U._apply_checkpoint(U.KLEIN_BASE_9B)
             assert P.BASE_REPO == U.KLEIN_BASE_9B, P.BASE_REPO
             assert not P.ZIMAGE_TRANSFORMER, \
-                "un repo de base complet doit effacer l'override single-file"
+                "a complete base repo must clear the single-file override"
             status, choices = out[0], out[4].get("choices")
             assert "Non-Commercial" in status and "gated" in status, status
             assert choices and "big9b.safetensors" in choices, choices
             assert "good4b.safetensors" not in choices, \
-                f"un checkpoint 4B ne charge pas dans un pipeline 9B: {choices}"
+                f"a 4B checkpoint does not load into a 9B pipeline: {choices}"
             assert saved.get(P.CFG_MODEL_KEY) == U.KLEIN_BASE_9B, saved
 
             # and back to the 4B: the list must flip round
@@ -333,7 +333,8 @@ def test_choosing_a_base_repo_retries_its_dimension():
         P._BASE_DIM_CACHE[U.KLEIN_BASE_9B] = None     # a previous failure (403 gated)
         P.BASE_REPO = U.KLEIN_BASE_4B
         P.set_zimage_model(U.KLEIN_BASE_9B)
-        assert U.KLEIN_BASE_9B not in P._BASE_DIM_CACHE,             "l'echec cache doit etre purge quand on rechoisit le repo"
+        assert U.KLEIN_BASE_9B not in P._BASE_DIM_CACHE, \
+            "the cached failure must be purged when the repo is chosen again"
     _with_lib(check)
     print("OK test_choosing_a_base_repo_retries_its_dimension")
 
@@ -354,9 +355,9 @@ def test_offload_is_forced_when_the_base_cannot_fit():
         P._total_vram_gb = lambda: 31.8        # RTX 5090
 
         P.BASE_REPO = "fits"
-        assert P._effective_offload() == "none", "le 4B tient: on ne touche a rien"
+        assert P._effective_offload() == "none", "the 4B fits: nothing is touched"
         P.BASE_REPO = "huge"
-        assert P._effective_offload() == "model", "le 9B ne tient pas: offload force"
+        assert P._effective_offload() == "model", "the 9B does not fit: offload forced"
 
         # A single-file override does NOT make the model smaller: an FP8/INT8 is
         # dequantised to bf16 and weighs as much as the original transformer. The
@@ -364,7 +365,7 @@ def test_offload_is_forced_when_the_base_cannot_fit():
         # step, after five minutes of dequantisation.
         P.BASE_REPO = "huge"
         P.ZIMAGE_TRANSFORMER = _ckpt("fp8_9b.safetensors", 4096)
-        assert P._effective_offload() == "model", "un FP8 9B ne tient pas plus qu'un bf16"
+        assert P._effective_offload() == "model", "an FP8 9B does not fit any better than a bf16"
         P.ZIMAGE_TRANSFORMER = None
 
         # a card big enough -> no correction at all

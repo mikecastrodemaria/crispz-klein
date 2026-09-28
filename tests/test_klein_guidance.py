@@ -62,10 +62,10 @@ def main():
     if verdict_ignored:
         print("VERDICT: guidance_scale IGNORE (modele distille).")
         print("  -> _cfg() ne passe ni guidance_scale ni negative")
-        print("  -> caps supports.negative = False + warning sur un spec avec negative")
+        print("  -> caps supports.negative = False + a warning on a spec with a negative")
     else:
         print("VERDICT: guidance_scale ACTIF.")
-        print("  -> coder negative_prompt_embeds via pipe.encode_prompt() dans _cfg")
+        print("  -> encode negative_prompt_embeds through pipe.encode_prompt() in _cfg")
     return 0 if True else 1
 
 

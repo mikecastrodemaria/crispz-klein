@@ -52,7 +52,7 @@ def test_the_base_repo_stays_at_one():
 def test_an_override_gets_the_slider():
     """On a third-party checkpoint, we do NOT know whether it is distilled: the user decides."""
     assert _guidance(4.0, CKPT) == 4.0
-    assert _guidance(1.0, CKPT) == 1.0, "curseur a 1.0: rien ne change"
+    assert _guidance(1.0, CKPT) == 1.0, "slider at 1.0: nothing changes"
     print("OK test_an_override_gets_the_slider")
 
 
@@ -75,7 +75,7 @@ def test_the_ignored_guidance_is_announced_once():
         _guidance(4.0, None)
     finally:
         P._log = real
-    assert len(said) == 1, f"{len(said)} lignes pour la meme valeur"
+    assert len(said) == 1, f"{len(said)} lines for the same value"
     assert "4" in said[0] and "distille" in said[0], said[0]
     P._CFG_IGNORED_SAID.clear()
     print("OK test_the_ignored_guidance_is_announced_once")
@@ -85,7 +85,7 @@ def test_a_preset_exists_for_undistilled_checkpoints():
     """With no preset, the only path was editing config.txt by hand."""
     import cz_ui
     hits = [(n, v) for n, v in cz_ui.PERFORMANCE.items() if float(v[1]) > 1.0]
-    assert hits, f"aucun preset avec une vraie CFG: {list(cz_ui.PERFORMANCE)}"
+    assert hits, f"no preset with a real CFG: {list(cz_ui.PERFORMANCE)}"
     name, (steps, cfg) = hits[0]
     assert steps >= 20 and cfg >= 2.0, (name, steps, cfg)
     # and the radio must be able to light up on it again from the sliders

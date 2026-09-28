@@ -349,7 +349,7 @@ _SCHEDULE_FLAG = {"beta": "use_beta_sigmas", "karras": "use_karras_sigmas",
 # sampler is built from (keeps shift/flow params whatever the current sampler is).
 _BASE_SCHED_CONFIG = None
 
-# Hook de progression UI (gradio gr.Progress). None hors UI (CLI/serveur). Pose par
+# UI progress hook (gradio gr.Progress). None outside the UI (CLI/server). Set by
 # the handlers through cz_pipeline._PROGRESS = ...
 _PROGRESS = None
 # Fooocus-style Stop: a global flag plus the interruption of the diffusers pipelines. Set
@@ -556,7 +556,7 @@ def _qwen_call(pipe, **kw):
         img = kw["image"]
         ref = img[0] if isinstance(img, (list, tuple)) else img
         kw["mask_image"] = Image.new("L", ref.size, 255)
-        _dbg(f"img2img -> inpaint pipeline + masque blanc plein {ref.size}")
+        _dbg(f"img2img -> inpaint pipeline + a full white mask {ref.size}")
     # Reuse the embeddings if this prompt has already been encoded (see _EMBED_CACHE).
     # Passing them skips the text encoder: that is the whole win.
     if isinstance(kw.get("prompt"), str) and not any(k in kw for k in _EMBED_OUTS):
@@ -2971,12 +2971,12 @@ def _base_vram_need_gb(base=None):
     if not t:
         return total
     rest = total - _TRANSFORMER_VRAM_GB.get(v, 0.0)      # text encoder + VAE
-    if _is_gguf_path(t):                                  # reste quantifie en VRAM
+    if _is_gguf_path(t):                                  # stays quantised in VRAM
         try:
             return rest + os.path.getsize(t) / 1024 ** 3
         except OSError:
             return total
-    return rest + _TRANSFORMER_VRAM_GB.get(v, 0.0)        # bf16, dequantifie ou non
+    return rest + _TRANSFORMER_VRAM_GB.get(v, 0.0)        # bf16, dequantised or not
 
 
 def _total_vram_gb():
@@ -4443,8 +4443,8 @@ def _refine_tiled(pipe, image, denoise, steps, prompt, seed, tile, overlap):
     # Anti-duplication 2 (a safety net): at a high denoise each tile can still drift.
     denoise = float(denoise)
     if _TILE_DENOISE_CAP > 0 and denoise > _TILE_DENOISE_CAP:
-        _log(f"refine tiled: denoise {denoise:.2f} > plafond {_TILE_DENOISE_CAP:.2f} -> "
-             f"reduit a {_TILE_DENOISE_CAP:.2f} (regle refine_tile_denoise_cap).")
+        _log(f"refine tiled: denoise {denoise:.2f} > the cap {_TILE_DENOISE_CAP:.2f} -> "
+             f"lowered to {_TILE_DENOISE_CAP:.2f} (refine_tile_denoise_cap rule).")
         denoise = _TILE_DENOISE_CAP
 
     acc = np.zeros((h, w, 3), dtype=np.float32)

@@ -62,7 +62,7 @@ def test_normalizes_a_mixed_file():
         "transformer.single_transformer_blocks.0.attn.to_out.lora_B.weight",
         "transformer.transformer_blocks.0.attn.to_k.lora_A.weight",
         "transformer.transformer_blocks.0.attn.to_k.lora_B.weight"}, sorted(sd)
-    assert len(sd) == 4, "aucune cle ne doit etre perdue ni ecrasee"
+    assert len(sd) == 4, "no key must be lost or overwritten"
     print("OK test_normalizes_a_mixed_file")
 
 

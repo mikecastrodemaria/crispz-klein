@@ -56,9 +56,9 @@ def test_config_overrides():
         D.CONFIG["detailer_steps"] = 8
         assert D._detailer_steps(12) == 8, "un entier positif force la valeur"
         D.CONFIG["detailer_steps"] = -1
-        assert D._detailer_steps(12) == 12, "-1 rend la main au curseur"
-        D.CONFIG["detailer_steps"] = "n'importe quoi"
-        assert D._detailer_steps(12) == 4, "une valeur illisible retombe sur le profil"
+        assert D._detailer_steps(12) == 12, "-1 hands control back to the slider"
+        D.CONFIG["detailer_steps"] = "anything at all"
+        assert D._detailer_steps(12) == 4, "an unreadable value falls back on the profile"
     _with_model("black-forest-labs/FLUX.2-klein-4B", None, check)
     print("OK test_config_overrides")
 

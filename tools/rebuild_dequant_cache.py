@@ -107,7 +107,7 @@ def bf16_gb(path):
 
 
 if czp._dequant_cache_dir() is None:
-    print("dequant_cache est sur 'off' dans config.txt: rien a pre-remplir.")
+    print("dequant_cache is 'off' in config.txt: nothing to pre-fill.")
     sys.exit(0)
 
 todo, done, skipped = [], [], []
@@ -133,7 +133,7 @@ for d in czp._checkpoint_dirs():
             continue
         dq = czp._safetensors_dequant(p)
         if not dq:
-            skipped.append((f, "bf16/fp16, rien a dequantifier"))
+            skipped.append((f, "bf16/fp16, nothing to dequantise"))
             continue
         tag = f"{dq}, {czp._variant_name(dim)}" if dim else dq
         cached = czp._dequant_cache_path(p)
@@ -142,39 +142,39 @@ for d in czp._checkpoint_dirs():
 for f, why in skipped:
     print(f"SKIP {f}: {why}")
 for p, tag, gb in done:
-    print(f"DEJA EN CACHE {os.path.basename(p)} ({tag}, {gb:.1f} Go)")
+    print(f"ALREADY CACHED {os.path.basename(p)} ({tag}, {gb:.1f} GB)")
 for p, tag, gb in todo:
-    print(f"A CONVERTIR   {os.path.basename(p)} ({tag}, {gb:.1f} Go)")
+    print(f"TO CONVERT     {os.path.basename(p)} ({tag}, {gb:.1f} GB)")
 
 if not todo and not done:
-    print("\nAucun checkpoint FP8/INT8 trouve dans:", czp._checkpoint_dirs(),
-          f"(filtre --only {ONLY})" if ONLY else "")
+    print("\nNo FP8/INT8 checkpoint found in:", czp._checkpoint_dirs(),
+          f"(--only {ONLY} filter)" if ONLY else "")
     sys.exit(0)
 
 cap = czp.DEQUANT_CACHE_MAX_GB
 todo_gb = sum(g for _p, _t, g in todo)
 need = todo_gb + sum(g for _p, _t, g in done)
-print(f"\n{len(todo) + len(done)} checkpoint(s) a couvrir: {need:.0f} Go de cache au "
-      f"total, dont {todo_gb:.0f} Go a ecrire maintenant. Plafond "
-      f"dequant_cache_max_gb = " + ("illimite (0)." if cap <= 0 else f"{cap:.0f} Go."))
+print(f"\n{len(todo) + len(done)} checkpoint(s) to cover: {need:.0f} GB of cache in "
+      f"total, {todo_gb:.0f} GB of it to write now. The dequant_cache_max_gb "
+      f"ceiling = " + ("unlimited (0)." if cap <= 0 else f"{cap:.0f} GB."))
 
 blocked = False
 if 0 < cap < need:
     blocked = True
     advise = int(math.ceil(need / 10.0) * 10) + 10
-    print(f"ATTENTION: plafond {cap:.0f} Go < {need:.0f} Go necessaires -> les "
-          f"premieres conversions seraient evincees par les dernieres et le cache ne "
-          f"servirait a rien.\nMets \"dequant_cache_max_gb\": {advise} dans "
-          f"config.txt (ou 0 pour illimite) avant de continuer.")
+    print(f"WARNING: a {cap:.0f} GB ceiling < the {need:.0f} GB needed -> the first "
+          f"conversions would be evicted by the last ones and the cache would be of "
+          f"no use.\nPut \"dequant_cache_max_gb\": {advise} in config.txt "
+          f"(or 0 for unlimited) before going on.")
 try:
     free = shutil.disk_usage(czp._dequant_cache_dir()).free / 1024 ** 3
 except OSError:
     free = None
 if free is not None and todo_gb and free < todo_gb:
     blocked = True
-    print(f"ATTENTION: {free:.0f} Go libres sur le disque du cache pour {todo_gb:.0f} "
-          f"Go a ecrire -> la conversion s'arreterait en route. Fais de la place, ou "
-          f"pointe \"dequant_cache\" vers un autre disque dans config.txt.")
+    print(f"WARNING: {free:.0f} GB free on the cache disk for {todo_gb:.0f} GB to "
+          f"write -> the conversion would stop halfway. Make room, or point "
+          f"\"dequant_cache\" at another disk in config.txt.")
 if blocked and "--list" not in sys.argv:
     sys.exit(1)
 
@@ -186,18 +186,18 @@ ok = fail = 0
 for i, (p, tag, gb) in enumerate(todo, 1):
     name = os.path.basename(p)
     t0 = time.time()
-    print(f"\n[{i}/{len(todo)}] {name} ({tag}, {gb:.1f} Go) ...")
+    print(f"\n[{i}/{len(todo)}] {name} ({tag}, {gb:.1f} GB) ...")
     try:
         sd = czp._load_dequant_state_dict(p)
         czp._dequant_cache_store(p, sd)
         del sd
         gc.collect()
         ok += 1
-        print(f"[{i}/{len(todo)}] OK {name} en {(time.time() - t0) / 60:.1f} min")
+        print(f"[{i}/{len(todo)}] OK {name} in {(time.time() - t0) / 60:.1f} min")
     except Exception as e:
         fail += 1
         print(f"[{i}/{len(todo)}] FAIL {name}: {type(e).__name__}: {e}")
 
-print(f"\nTermine en {(time.time() - t_all) / 60:.0f} min: {ok} converti(s), "
-      f"{len(done)} deja en cache, {fail} echec(s).")
-print("Relancable a volonte: tout ce qui est fait est saute.")
+print(f"\nDone in {(time.time() - t_all) / 60:.0f} min: {ok} converted, "
+      f"{len(done)} already cached, {fail} failure(s).")
+print("Re-runnable at will: everything already done is skipped.")

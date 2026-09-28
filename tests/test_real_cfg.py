@@ -100,9 +100,9 @@ def test_a_single_file_gets_real_cfg_during_the_call_only():
     finally:
         _restore(old)
     call = pipe.calls[0]
-    assert call["is_distilled"] is False, "le pipeline doit voir un modele NON distille"
+    assert call["is_distilled"] is False, "the pipeline must see a NON-distilled model"
     assert call["guidance"] == 3.5, call
-    assert pipe.config.is_distilled is True, "drapeau non retabli apres l'appel"
+    assert pipe.config.is_distilled is True, "the flag was not restored after the call"
     print("OK test_a_single_file_gets_real_cfg_during_the_call_only")
 
 
@@ -114,12 +114,12 @@ def test_the_flag_is_restored_even_when_the_call_fails():
         pipe = FakePipe(fail=True)
         try:
             P._qwen_call(pipe, prompt="p")
-            raise AssertionError("l'erreur du pipeline doit remonter")
+            raise AssertionError("the pipeline's error must propagate")
         except RuntimeError:
             pass
     finally:
         _restore(old)
-    assert pipe.config.is_distilled is True, "drapeau non retabli apres une erreur"
+    assert pipe.config.is_distilled is True, "the flag was not restored after an error"
     print("OK test_the_flag_is_restored_even_when_the_call_fails")
 
 

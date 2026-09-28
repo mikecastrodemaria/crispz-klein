@@ -63,7 +63,7 @@ def test_an_unknown_layout_is_named_not_crashed():
         assert "f.safetensors" in str(e) and "(6, 8)" in str(e) and "(3, 5)" in str(e), e
         print("OK test_an_unknown_layout_is_named_not_crashed")
         return
-    raise AssertionError("aucune erreur levee")
+    raise AssertionError("no error raised")
 
 
 if __name__ == "__main__":

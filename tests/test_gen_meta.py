@@ -115,7 +115,7 @@ def test_the_base_repo_alone_needs_no_second_line():
     finally:
         _restore(old)
     assert m["model"] == BASE
-    assert "base_repo" not in m, "redondant quand le modele EST le repo"
+    assert "base_repo" not in m, "redundant when the model IS the repo"
     print("OK test_the_base_repo_alone_needs_no_second_line")
 
 

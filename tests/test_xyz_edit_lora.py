@@ -24,7 +24,7 @@ import cz_ui as U        # noqa: E402
 
 
 def _vals(edit=False):
-    """Stand-in de _gen_inputs. edit=True -> un vrai job d'edition."""
+    """Stand-in for _gen_inputs. edit=True -> a real edit job."""
     v = [None] * 36
     v[U._Q_IDX["prompt"]] = "a cat"
     v[U._Q_IDX["use_input"]] = bool(edit)
@@ -81,7 +81,7 @@ def test_a_csv_error_becomes_a_message_never_a_traceback():
     except csv.Error:                      # noqa: B902 - that is exactly the bug
         raise AssertionError("csv.Error a fuit: elle repartirait en trace Gradio")
     else:
-        raise AssertionError("aucune erreur levee")
+        raise AssertionError("no error raised")
     finally:
         csv.reader = real
     print("OK test_a_csv_error_becomes_a_message_never_a_traceback")

@@ -140,7 +140,7 @@ def test_restore_offload_only_acts_on_a_pipe_left_on_the_cpu():
     cz.DEVICE = "cuda"
     cz._effective_offload = lambda *a, **k: "model"
     try:
-        broken = FakePipe(hooks=False)               # laisse sur le CPU
+        broken = FakePipe(hooks=False)               # left on the CPU
         assert cz.restore_offload(broken, "a test") is True
         assert broken.enabled == 1 and str(broken._execution_device) == "cuda"
         healthy = FakePipe()                          # already on the card

@@ -81,7 +81,7 @@ def main():
     r.save("tests/e2e_5_refine.png")
     assert r.size == img.size, (r.size, img.size)
 
-    print("\n[6] partage du pipeline derive (pas de VRAM en double)")
+    print("\n[6] the derived pipeline is shared (no duplicated VRAM)")
     same = p.get_pipe("inpaint") is p.get_pipe("img2img")
     print(f"  img2img is inpaint     {same}")
     ok &= same
@@ -89,8 +89,8 @@ def main():
     print(f"  omni    is base        {omni_is_base}")
     ok &= omni_is_base
 
-    print(f"\nVRAM totale finale: {vram():.2f} GB (un seul modele charge)")
-    print("RESULTAT:", "OK" if ok else "ECHEC")
+    print(f"\nfinal total VRAM: {vram():.2f} GB (a single model loaded)")
+    print("RESULT:", "OK" if ok else "FAILED")
     return 0 if ok else 1
 
 

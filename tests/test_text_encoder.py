@@ -118,8 +118,8 @@ def test_changing_the_encoder_frees_the_pipe_and_the_cache():
         P._EMBED_CACHE[("k",)] = ("v",)
         P.set_text_encoder(r"D:\enc\qwen3-abl")
         assert P.TEXT_ENCODER == r"D:\enc\qwen3-abl"
-        assert P._BASE_PIPE is None, "le pipeline doit etre libere"
-        assert not P._EMBED_CACHE, "les anciens encodages resteraient servis"
+        assert P._BASE_PIPE is None, "the pipeline must be released"
+        assert not P._EMBED_CACHE, "the old encodings would still be served"
         # the same value: nothing moves, no pointless reload
         sentinel = P._BASE_PIPE = object()
         P.set_text_encoder(r"D:\enc\qwen3-abl")
@@ -153,7 +153,7 @@ def test_the_embed_key_carries_the_encoder():
         assert pipe.n == 1, pipe.n
         P._TEXT_ENCODER_ACTIVE = r"D:\enc\qwen3-abl"
         P._cached_prompt_embeds(pipe, "p", {})
-        assert pipe.n == 2, "un encodage de l'autre encodeur a ete resservi"
+        assert pipe.n == 2, "an encoding from the other encoder was served again"
     finally:
         P._TEXT_ENCODER_ACTIVE = old
         P._embed_cache_clear()
@@ -167,7 +167,7 @@ def test_metadata_names_the_encoder_that_ran_and_never_its_path():
         P.TEXT_ENCODER = P._TEXT_ENCODER_ACTIVE = path
         m = P._gen_meta("txt2img", "p")
         assert m["text_encoder"] == "qwen3-4b-abliterated", m
-        assert "someone" not in json.dumps(m), "chemin local dans les metadonnees"
+        assert "someone" not in json.dumps(m), "a local path in the metadata"
         # asked for but discarded at load time: named apart
         P._TEXT_ENCODER_ACTIVE = ""
         m = P._gen_meta("txt2img", "p")

@@ -85,8 +85,8 @@ def test_summary_carries_the_instructions_once():
     line = _with_base("base-4b", 3072, lambda: P._variant_skip_summary(11, 4096))
     assert "11 checkpoint" in line, line
     assert "FLUX.2-klein-9B" in line and "FLUX.2-klein-4B" in line, line
-    assert P.CFG_MODEL_KEY in line, f"la clef de config doit etre nommee: {line}"
-    assert "zimage_model" not in line, "l ancien nom ne doit plus apparaitre"
+    assert P.CFG_MODEL_KEY in line, f"the config key must be named: {line}"
+    assert "zimage_model" not in line, "the old name must no longer appear"
     assert "NON-COMMERCIAL" in line, line
     # the other way round: no licence note when discarding a 4B
     line = _with_base("base-9b", 4096, lambda: P._variant_skip_summary(2, 3072))
@@ -175,7 +175,7 @@ def test_a_4B_lora_on_a_9B_base_is_refused_in_one_sentence():
     P._BASE_DIM_CACHE[P.BASE_REPO] = 4096
     try:
         why = P._lora_unsupported(_lora("lora_4B_on_9B.safetensors", 3072))
-        assert why, "une LoRA 4B doit etre refusee sur une base 9B"
+        assert why, "a 4B LoRA must be refused on a 9B base"
         assert "4B" in why and "9B" in why, why
         assert "3072" in why and "4096" in why, why      # both numbers, named
         assert "switch the base model" in why, why       # and what to do

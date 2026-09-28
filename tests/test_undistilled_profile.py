@@ -27,7 +27,7 @@ def _profile(path):
 
 def test_the_official_undistilled_base_gets_the_undistilled_preset():
     preset, pst, pg = U._undistilled_profile()
-    assert preset, "aucun preset a vraie CFG dans PERFORMANCE"
+    assert preset, "no real-CFG preset in PERFORMANCE"
     for name in ("flux-2-klein-base-4b-fp8.safetensors", "FLUX.2-klein-base-9B.safetensors",
                  "flux2_klein_base_4b.safetensors"):
         st, g, why = _profile(os.path.join("F:\\m", name))
