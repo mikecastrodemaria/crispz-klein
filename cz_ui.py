@@ -242,7 +242,7 @@ def _dl_path(pil, path):
 import json  # noqa: F811 (utilise par _load_styles ci-dessous)
 
 
-# _load_styles / STYLES -> cz_prompt.py (importes en tete).
+# _load_styles / STYLES -> cz_prompt.py (imported at the top).
 
 
 # CONFIG + the defaults driven by config.txt -> cz_core.py (imported at the top).
@@ -259,10 +259,10 @@ if isinstance(CONFIG.get("performance_presets"), dict) and CONFIG["performance_p
     except Exception:
         pass
 
-# MODEL_PROFILES / profile_for_model -> cz_core.py (importes en tete).
+# MODEL_PROFILES / profile_for_model -> cz_core.py (imported at the top).
 
 
-# DESCRIBE/IMPROVE/COMPOSE_INSTRUCTION -> cz_core.py (importes en tete).
+# DESCRIBE/IMPROVE/COMPOSE_INSTRUCTION -> cz_core.py (imported at the top).
 
 
 # _load_prefs_raw / _save_prefs_keys / _is_single_file / _prefs -> cz_core.py.
@@ -290,7 +290,7 @@ from cz_pipeline import (  # noqa: E402,F401
 # (__getattr__) for the smoke test; here we always read cz_pipeline.NAME / cz_face.NAME.
 
 
-# Logging (LOG_LEVEL / _log / _dbg / set_log_level) -> cz_core.py (importes en tete).
+# Logging (LOG_LEVEL / _log / _dbg / set_log_level) -> cz_core.py (imported at the top).
 # Note: direct reads of LOG_LEVEL outside cz_core use cz_core.LOG_LEVEL.
 
 
@@ -363,7 +363,7 @@ def _crop_input(label, height=280):
 
 
 # outpaint / _make_generator / _refine_whole / _feather_mask_np / _refine_tiled /
-# process_one / txt2img_run -> cz_pipeline.py (importes en tete).
+# process_one / txt2img_run -> cz_pipeline.py (imported at the top).
 
 
 # I/O image (noms, sauvegarde, metadonnees) -> cz_imageio.py (_gen_meta -> cz_pipeline).
@@ -1189,6 +1189,96 @@ def _ui_kw_to_prompt(prompt_text, keywords):
     if base and not base.endswith(","):
         base += ", "
     return gr.update(value=base + kw)
+
+
+def _klein_base_prefixes():
+    """(the family prefix, the current variant prefix), normalised, for ranking the CivitAI
+    candidates.
+
+    CivitAI labels these LoRAs 'Flux.2 Klein 4B-base' (read from a real sidecar), so the
+    exact comparison the single-base forks use would match nothing -> a PREFIX match on the
+    normalised label. The VARIANT matters here, unlike on those forks: a 4B LoRA does not
+    load on a 9B base, cz_pipeline refuses it with its reason. The variant is only used to
+    ORDER and to filter on request; reading it must never break a search, hence the except.
+    """
+    fam = cz_civitai._norm_base("FLUX.2-klein")
+    cur = ""
+    try:
+        cur = cz_civitai._norm_base(cz_pipeline._variant_name(cz_pipeline._base_hidden_dim()))
+    except Exception as e:
+        _dbg(f"civitai search: current variant unknown ({e})")
+    return fam, (cur if cur.startswith(fam) else "")
+
+
+def _ui_civitai_lora_search(query, klein_only):
+    """Searches CivitAI for a LoRA by name. Returns (the field, the candidates, the state,
+    the status): the state carries the candidate dicts (label -> candidate) for the
+    Download button. The candidates of the CURRENT variant come first, then the other
+    Klein ones, then the rest."""
+    q = (query or "").strip()
+    if not q:
+        return (gr.update(), gr.update(choices=[], value=None), {},
+                "Type a LoRA name to search on CivitAI.")
+    cands = cz_civitai.search_loras(q, limit=10)
+    fam, cur = _klein_base_prefixes()
+
+    def _rank(c):
+        b = cz_civitai._norm_base(c.get("baseModel"))
+        if cur and b.startswith(cur):
+            return 0
+        return 1 if b.startswith(fam) else 2
+
+    cands.sort(key=_rank)                        # stable: CivitAI's own order is kept
+    if klein_only:
+        cands = [c for c in cands
+                 if cz_civitai._norm_base(c.get("baseModel")).startswith(fam)]
+    if not cands:
+        hint = (" with a FLUX.2 Klein base — untick 'Klein only' to see the other bases "
+                "(they will not load here)." if klein_only else
+                ". Check the spelling, or the model may not be on CivitAI.")
+        return (gr.update(value=q), gr.update(choices=[], value=None), {},
+                f"No CivitAI result for **{q}**{hint}")
+    state, labels = {}, []
+    for c in cands:
+        size = f"{c['sizeKB'] / 1024:.0f} MB" if c.get("sizeKB") else "size ?"
+        label = (f"{c['modelName']} — {c['versionName']} [{c['baseModel'] or 'base ?'}] "
+                 f"— {size}"
+                 + (f" — by {c['creator']}" if c.get("creator") else "")
+                 + (" — NSFW" if c.get("nsfw") else ""))
+        if label in state:                       # two versions with the same label
+            label += f" (v{c['versionId']})"
+        state[label] = c
+        labels.append(label)
+    note = ""
+    if cur:
+        n_cur = sum(1 for c in cands
+                    if cz_civitai._norm_base(c.get("baseModel")).startswith(cur))
+        note = (f" {n_cur} match the loaded variant." if n_cur
+                else " None match the loaded variant — check the base in brackets.")
+    return (gr.update(value=q), gr.update(choices=labels, value=labels[0]), state,
+            f"{len(labels)} candidate(s) for **{q}** — pick one, then Download.{note} "
+            f"[Open on CivitAI]({cands[0]['url']})")
+
+
+def _ui_civitai_lora_download(label, state, progress=gr.Progress()):
+    """Downloads the chosen candidate into LORAS_DIR (a verified SHA256 + preview/triggers),
+    then refreshes the choices of ALL the LoRA slots. A failure = a message, never a crash."""
+    cand = (state or {}).get(label)
+    if not cand:
+        return tuple(gr.update() for _ in range(MAX_LORA_SLOTS)) \
+            + ("Search first, then pick a candidate to download.",)
+
+    def _prog(_phase, frac, text):
+        progress(frac if frac is not None else 0.0, desc=text)
+
+    res = cz_civitai.download_model_file(cand, cz_pipeline.LORAS_DIR, progress=_prog)
+    if not res.get("success"):
+        return tuple(gr.update() for _ in range(MAX_LORA_SLOTS)) \
+            + ("❌ " + res.get("message", "download failed"),)
+    rel = os.path.relpath(res["path"], cz_pipeline.LORAS_DIR).replace(os.sep, "/")
+    msg = f"✅ {res['message']}  \nSelect **{rel}** in a LoRA slot."
+    lr = ["None"] + list_loras()
+    return tuple(gr.update(choices=lr) for _ in range(MAX_LORA_SLOTS)) + (msg,)
 
 
 def _ui_check_omni():
@@ -4482,6 +4572,28 @@ def build_ui():
                                 lora_kw_btn = gr.Button("Get keywords", size="sm")
                                 lora_kw_to_prompt_btn = gr.Button("Add to prompt", size="sm", variant="primary")
                             lora_status = gr.Markdown("")
+                            with gr.Accordion("\U0001F50E Search CivitAI (download a LoRA)",
+                                              open=False):
+                                gr.Markdown(
+                                    "*Search a LoRA by name on CivitAI. The versions of the "
+                                    "LOADED variant come first (a 4B LoRA does not load on a "
+                                    "9B base). Download goes to the LoRA folder, with a "
+                                    "SHA256 check + preview/trigger words fetched.*")
+                                with gr.Row():
+                                    civ_lora_q = gr.Textbox(
+                                        show_label=False, scale=3, container=False,
+                                        placeholder="LoRA name to search on CivitAI")
+                                    civ_lora_konly = gr.Checkbox(value=True, label="Klein only",
+                                                                 scale=1)
+                                    civ_lora_search_btn = gr.Button("Search", size="sm",
+                                                                    variant="primary", scale=1,
+                                                                    min_width=90)
+                                civ_lora_dd = gr.Dropdown(choices=[], value=None,
+                                                          label="Candidates (base model in brackets)")
+                                civ_lora_state = gr.State({})
+                                civ_lora_dl_btn = gr.Button("\u2b07 Download to LoRA folder",
+                                                            size="sm")
+                                civ_lora_status = gr.Markdown("")
                             edit_loras_cb = gr.Checkbox(
                                 value=cz_pipeline.EDIT_LORAS_ENABLED,
                                 label="Edit LoRAs",
@@ -4733,6 +4845,11 @@ def build_ui():
         lora_kw_btn.click(_ui_loras_keywords, lora_dds,
                           [lora_keywords_tb, lora_status])
         lora_kw_to_prompt_btn.click(_ui_kw_to_prompt, [prompt, lora_keywords_tb], [prompt])
+        civ_lora_search_btn.click(_ui_civitai_lora_search, [civ_lora_q, civ_lora_konly],
+                                  [civ_lora_q, civ_lora_dd, civ_lora_state,
+                                   civ_lora_status])
+        civ_lora_dl_btn.click(_ui_civitai_lora_download, [civ_lora_dd, civ_lora_state],
+                              lora_dds + [civ_lora_status])
         # ----- Presets (Settings) -----
         _preset_scalars = [prompt, negative, styles, width, height, gen_steps, guidance,
                            sampler_dd, schedule_dd, image_number, ckpt_dd, transformer_tb]
