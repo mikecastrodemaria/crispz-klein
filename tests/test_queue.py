@@ -73,10 +73,29 @@ def test_render():
     assert "empty" in md and btn["value"] == "+ Queue (0)"
     items = [{"label": "j1"}, {"label": "j2"}]
     upd, md, btn = cz_ui._q_render(items, 1)
-    assert "1. j1" in md and "2. j2" in md
+    # The jobs live in the radio's CHOICES now, not in the Markdown: the list you read and
+    # the thing you click are one widget. The Markdown is a one-line summary.
+    labels = [c[0] for c in upd["choices"]]
+    assert labels == ["#1 ▶ j1", "#2 j2"], labels
+    assert "2 job(s)" in md and "1. j1" not in md, md
     assert btn["value"] == "+ Queue (2)" and upd["value"] == 1
     upd, _, _ = cz_ui._q_render(items, 99)           # selection out of bounds -> None
     assert upd["value"] is None
+
+
+def test_the_run_next_marker_follows_the_queue_not_the_selection():
+    """'▶' marks the head of the queue. Selecting job 2 to move it must not move the
+    marker: what runs next and what you are editing are different things."""
+    items = [{"label": "a"}, {"label": "b"}, {"label": "c"}]
+    for sel in (None, 0, 2):
+        labels = [c[0] for c in cz_ui._q_render(items, sel)[0]["choices"]]
+        assert labels[0].startswith("#1 ▶ "), labels
+        assert all("▶" not in l for l in labels[1:]), labels
+    # and it follows a reorder: the job moved to the head becomes the one marked
+    cz_ui._q_move(items, 2, -1)
+    cz_ui._q_move(items, 1, -1)
+    labels = [c[0] for c in cz_ui._q_render(items)[0]["choices"]]
+    assert labels[0] == "#1 ▶ c", labels
 
 
 def test_model_state_roundtrip_keys():
@@ -195,7 +214,10 @@ def test_request_pause_sets_the_flag_and_reports():
 
 
 if __name__ == "__main__":
+    # Explicit, not the globals() scan the rest of the suite uses: a test added above and
+    # forgotten in this tuple is defined and never run.
     for fn in (test_label, test_move, test_remove, test_render,
+               test_the_run_next_marker_follows_the_queue_not_the_selection,
                test_model_state_roundtrip_keys,
                test_restore_tolerates_a_snapshot_without_the_edit_set,
                test_pause_finishes_current_job_then_halts,

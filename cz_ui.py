@@ -2492,17 +2492,24 @@ def _q_restore_model_state(ms):
 
 
 def _q_label(vals, ms):
-    """A readable label for a job (its key parameters) from the snapshot."""
+    """A readable label for a job (its key parameters) from the snapshot.
+
+    The PROMPT comes first and the fields are pipe-separated: in a clickable list each row
+    is read left to right, and what tells two jobs apart is almost always the prompt, not
+    the mode. The rest keeps the same fields in the same words, so a label stays greppable.
+    """
     mode = "img2img" if vals[_Q_IDX["use_input"]] else "txt2img"
     model = os.path.basename(str(ms.get("transformer") or ms.get("base_repo") or "?"))
     n = max(1, int(vals[_Q_IDX["image_number"]] or 1))
     seed = int(vals[_Q_IDX["seed"]] if vals[_Q_IDX["seed"]] is not None else -1)
     p = str(vals[_Q_IDX["prompt"]] or "").strip().replace("\n", " ")
-    lbl = (f"{mode} · {model} · {int(vals[_Q_IDX['width']])}x{int(vals[_Q_IDX['height']])} · "
-           f"{int(vals[_Q_IDX['gen_steps']])} steps · seed {seed} · x{n}")
+    parts = []
     if p:
-        lbl += f" · “{p[:40]}{'…' if len(p) > 40 else ''}”"
-    return lbl
+        parts.append(f"{p[:48]}{'…' if len(p) > 48 else ''}")
+    parts += [mode, model,
+              f"{int(vals[_Q_IDX['width']])}x{int(vals[_Q_IDX['height']])}",
+              f"{int(vals[_Q_IDX['gen_steps']])} steps", f"seed {seed}", f"x{n}"]
+    return " | ".join(parts)
 
 
 def _q_move(items, sel, delta):
@@ -2531,12 +2538,26 @@ def _q_remove(items, sel):
 
 
 def _q_render(items, sel=None):
-    """UI updates from the queue: (dropdown selection, markdown list, button label)."""
-    choices = [(f"#{i + 1} {it['label']}", i) for i, it in enumerate(items)]
+    """UI updates from the queue: (the job list, a one-line summary, the button label).
+
+    The first element drives a gr.Radio -- one clickable row per job -- and NOT a dropdown
+    any more: reading the queue in one widget and selecting in another was two places for
+    one thing. gr.Radio takes the same update shape as gr.Dropdown, so this function keeps
+    its arity and its eleven callers are untouched.
+
+    '▶' marks the job that runs NEXT, which is the head of the queue and has nothing to do
+    with the selection: you can move or remove a job other than the one about to run.
+
+    The Markdown stopped being a list for the same reason -- it duplicated the radio -- and
+    is now a one-line summary.
+    """
+    choices = [(f"#{i + 1} {'▶ ' if i == 0 else ''}{it['label']}", i)
+               for i, it in enumerate(items)]
     val = int(sel) if (sel is not None and 0 <= int(sel) < len(items)) else None
-    md = "\n".join(f"{i + 1}. {it['label']}" for i, it in enumerate(items)) or "*Queue empty.*"
-    return (gr.update(choices=choices, value=val), md,
-            gr.update(value=f"+ Queue ({len(items)})"))
+    md = (f"*{len(items)} job(s) queued — ▶ #1 runs next.*" if items
+          else "*Queue empty.*")
+    return (gr.update(choices=choices, value=val),
+            md, gr.update(value=f"+ Queue ({len(items)})"))
 
 
 # --- Queue persistence (survives a restart / a crash) ---------------
@@ -3982,13 +4003,17 @@ def build_ui():
                                                       scale=1, min_width=140)
                             queue_pause_btn = gr.Button("⏸ Pause", size="sm",
                                                         scale=1, min_width=100)
+                        # One clickable row per job (Fooocus-style) instead of a
+                        # Markdown list plus a separate "Selected job" dropdown: the list
+                        # you read and the thing you pick are the same widget.
+                        queue_sel = gr.Radio([], label="Pending jobs", value=None,
+                                             container=True)
                         queue_md = gr.Markdown("*Queue empty.*")
                         with gr.Row():
-                            queue_sel = gr.Dropdown([], label="Selected job", scale=4)
-                            queue_up_btn = gr.Button("Up", size="sm", scale=0, min_width=60)
-                            queue_down_btn = gr.Button("Down", size="sm", scale=0, min_width=70)
-                            queue_rm_btn = gr.Button("Remove", size="sm", scale=0, min_width=90)
-                            queue_clear_btn = gr.Button("Clear", size="sm", scale=0, min_width=70)
+                            queue_up_btn = gr.Button("🔼 Up", size="sm", scale=1, min_width=80)
+                            queue_down_btn = gr.Button("🔽 Down", size="sm", scale=1, min_width=90)
+                            queue_rm_btn = gr.Button("❌ Remove", size="sm", scale=1, min_width=100)
+                            queue_clear_btn = gr.Button("🗑 Clear", size="sm", scale=1, min_width=90)
 
                 if XYZ_ENABLED:
                     with gr.Accordion("X/Y/Z grid", open=False):
