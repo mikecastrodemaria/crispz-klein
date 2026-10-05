@@ -2537,6 +2537,28 @@ def _q_remove(items, sel):
     return items, (min(int(sel), len(items) - 1) if items else None)
 
 
+def _q_choices(items):
+    """The job list as (label, index) pairs, for the radio.
+
+    Shared with build_ui on purpose. The components used to be built EMPTY while the
+    accordion title and the + Queue button were computed from the restored queue, so a
+    restart showed "Job queue (2 restored)", "+ Queue (2)" and an empty list -- nothing
+    renders the queue at page load, only an interaction does. Going through one function
+    is what stops the two sides drifting again.
+
+    '▶' marks the job that runs NEXT: the head of the queue, nothing to do with the
+    selection -- you can move or remove a job other than the one about to run.
+    """
+    return [(f"#{i + 1} {'▶ ' if i == 0 else ''}{it['label']}", i)
+            for i, it in enumerate(items)]
+
+
+def _q_summary(items):
+    """The one-line summary under the list (it used to repeat the list itself)."""
+    return (f"*{len(items)} job(s) queued — ▶ #1 runs next.*" if items
+            else "*Queue empty.*")
+
+
 def _q_render(items, sel=None):
     """UI updates from the queue: (the job list, a one-line summary, the button label).
 
@@ -2551,13 +2573,9 @@ def _q_render(items, sel=None):
     The Markdown stopped being a list for the same reason -- it duplicated the radio -- and
     is now a one-line summary.
     """
-    choices = [(f"#{i + 1} {'▶ ' if i == 0 else ''}{it['label']}", i)
-               for i, it in enumerate(items)]
     val = int(sel) if (sel is not None and 0 <= int(sel) < len(items)) else None
-    md = (f"*{len(items)} job(s) queued — ▶ #1 runs next.*" if items
-          else "*Queue empty.*")
-    return (gr.update(choices=choices, value=val),
-            md, gr.update(value=f"+ Queue ({len(items)})"))
+    return (gr.update(choices=_q_choices(items), value=val), _q_summary(items),
+            gr.update(value=f"+ Queue ({len(items)})"))
 
 
 # --- Queue persistence (survives a restart / a crash) ---------------
@@ -2682,6 +2700,21 @@ def _ui_queue_clear(items):
     else:
         items = []
     _q_persist(items)
+    return (items, *_q_render(items))
+
+
+def _ui_queue_reload():
+    """Re-seeds the queue panel from DISK on every page load.
+
+    _q_restored is read once, when build_ui runs, and gr.State hands each session a copy
+    of it. So the module-level snapshot never changes: clear the queue, reload the page,
+    and the cleared jobs came back while queue.json said 0. Building the panel from that
+    snapshot fixed the empty list but inherited the staleness.
+
+    Reading the file here is what makes a page load agree with what is persisted -- and
+    _q_persist writes on every mutation, so the file is the live truth.
+    """
+    items = _q_load()
     return (items, *_q_render(items))
 
 
@@ -4006,9 +4039,12 @@ def build_ui():
                         # One clickable row per job (Fooocus-style) instead of a
                         # Markdown list plus a separate "Selected job" dropdown: the list
                         # you read and the thing you pick are the same widget.
-                        queue_sel = gr.Radio([], label="Pending jobs", value=None,
-                                             container=True)
-                        queue_md = gr.Markdown("*Queue empty.*")
+                        # Built FROM the restored queue, through the same two helpers
+                        # _q_render uses: empty components next to a "(2 restored)" title
+                        # and a "+ Queue (2)" button is what a restart used to show.
+                        queue_sel = gr.Radio(_q_choices(_q_restored), label="Pending jobs",
+                                             value=None, container=True)
+                        queue_md = gr.Markdown(_q_summary(_q_restored))
                         with gr.Row():
                             queue_up_btn = gr.Button("🔼 Up", size="sm", scale=1, min_width=80)
                             queue_down_btn = gr.Button("🔽 Down", size="sm", scale=1, min_width=90)
@@ -5035,6 +5071,10 @@ def build_ui():
         # On page load: detects Ollama and picks the remembered vision model back up.
         demo.load(_ui_detect_ollama, [ollama_url], [ollama_model, ollama_status, caption_model_dd])
         demo.load(_ui_detect_improve_models, [ollama_url], [improve_model])
+        if JOB_QUEUE_ENABLED:
+            # ... and re-seeds the queue from disk: the module-level snapshot taken when
+            # build_ui ran goes stale on the first mutation (see _ui_queue_reload).
+            demo.load(_ui_queue_reload, None, _q_panel)
     global _DEMO
     _DEMO = demo  # to authorise on the fly the output folders changed in the UI
     return demo

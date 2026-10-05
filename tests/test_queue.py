@@ -83,6 +83,40 @@ def test_render():
     assert upd["value"] is None
 
 
+def test_a_page_load_re_seeds_the_queue_from_disk():
+    """The module-level snapshot is read once, when build_ui runs, and gr.State hands each
+    session a COPY of it -- so clearing the queue and reloading the page brought the
+    cleared jobs back while queue.json said 0. A page load reads the file, which
+    _q_persist rewrites on every mutation."""
+    real = cz_ui._q_load
+    try:
+        cz_ui._q_load = lambda: [{"label": "from disk"}]
+        items, upd, md, btn = cz_ui._ui_queue_reload()
+        assert [it["label"] for it in items] == ["from disk"], items
+        assert upd["choices"] == [("#1 ▶ from disk", 0)], upd["choices"]
+        assert "1 job(s)" in md and btn["value"] == "+ Queue (1)"
+        cz_ui._q_load = lambda: []
+        items, upd, md, btn = cz_ui._ui_queue_reload()
+        assert items == [] and upd["choices"] == [] and "empty" in md.lower()
+    finally:
+        cz_ui._q_load = real
+
+
+def test_a_restored_queue_is_rendered_at_build_time():
+    """A restart used to show "Job queue (2 restored)" and "+ Queue (2)" above an EMPTY
+    list: the components were built empty and only an interaction ever filled them. The
+    panel and _q_render now go through the same two helpers, so they cannot drift."""
+    items = [{"label": "a"}, {"label": "b"}]
+    assert cz_ui._q_choices([]) == []
+    assert "empty" in cz_ui._q_summary([]).lower()
+    assert cz_ui._q_choices(items) == [("#1 ▶ a", 0), ("#2 b", 1)]
+    assert "2 job(s)" in cz_ui._q_summary(items)
+    # what the panel is built with == what an update sends
+    upd, md, _btn = cz_ui._q_render(items)
+    assert upd["choices"] == cz_ui._q_choices(items), upd["choices"]
+    assert md == cz_ui._q_summary(items), md
+
+
 def test_the_run_next_marker_follows_the_queue_not_the_selection():
     """'▶' marks the head of the queue. Selecting job 2 to move it must not move the
     marker: what runs next and what you are editing are different things."""
@@ -217,6 +251,8 @@ if __name__ == "__main__":
     # Explicit, not the globals() scan the rest of the suite uses: a test added above and
     # forgotten in this tuple is defined and never run.
     for fn in (test_label, test_move, test_remove, test_render,
+               test_a_restored_queue_is_rendered_at_build_time,
+               test_a_page_load_re_seeds_the_queue_from_disk,
                test_the_run_next_marker_follows_the_queue_not_the_selection,
                test_model_state_roundtrip_keys,
                test_restore_tolerates_a_snapshot_without_the_edit_set,
