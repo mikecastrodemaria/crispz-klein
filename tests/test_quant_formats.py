@@ -27,11 +27,11 @@ def _st(name, tensors):
 
 
 # Cles minimales "FLUX.2" (marqueur single_transformer_blocks) au format ComfyUI.
-# Relevees sur le transformer reel de FLUX.2-klein-4B (cf. _QWEN_KEY_MARKERS).
+# Taken from the real FLUX.2-klein-4B transformer (see _QWEN_KEY_MARKERS).
 _W = "model.diffusion_model.single_transformer_blocks.0.attn.to_q.weight"
-# La MEME cle au layout diffusers: le loader doit retirer le prefixe ComfyUI, sinon
-# Flux2Transformer2DModel (mappe par une fonction identite dans diffusers) ne
-# reconnait aucune cle et le modele reste sur 'meta' ("Cannot copy out of meta tensor").
+# The SAME key in the diffusers layout: the loader has to strip the ComfyUI prefix, or
+# Flux2Transformer2DModel (mapped through an identity function in diffusers) recognises
+# no key at all and the model stays on 'meta' ("Cannot copy out of meta tensor").
 _WD = _W[len("model.diffusion_model."):]
 
 
@@ -46,7 +46,7 @@ def test_fp8_pure_detect_and_dequant():
     p = _st("fp8.safetensors", {_W: w})
     assert cz_pipeline._safetensors_dequant(p) == "FP8"
     sd = cz_pipeline._load_dequant_state_dict(p)
-    assert _W not in sd, "le prefixe ComfyUI doit etre retire"
+    assert _W not in sd, "the ComfyUI prefix must be stripped"
     assert sd[_WD].dtype == cz_pipeline.DTYPE
     assert torch.allclose(sd[_WD].float(), w.float().to(cz_pipeline.DTYPE).float())
 
@@ -77,11 +77,11 @@ def test_int8_per_row_scale():
 
 
 def test_int8_convrot_roundtrip():
-    # Format int8_tensorwise + ConvRot de comfy-quants: les poids sont TOURNES
-    # (Hadamard base H4 par groupes de 256) avant quantification -> le loader doit
-    # defaire la rotation, sinon bruit total (observe en vrai sur redzit/studio).
+    # comfy-quants' int8_tensorwise + ConvRot format: the weights are ROTATED
+    # (Hadamard, H4 base, in groups of 256) before quantisation -> the loader has to undo
+    # the rotation, or it is pure noise (seen for real on redzit/studio).
     torch.manual_seed(0)
-    W = torch.randn(8, 512)                      # in=512 -> 2 groupes de 256
+    W = torch.randn(8, 512)                      # in=512 -> 2 groups of 256
     H = cz_pipeline._hadamard_ortho(256)
     wr = (W.view(8, 2, 256) @ H.T).reshape(8, 512)
     scale = (wr.abs().amax(dim=-1, keepdim=True) / 127).clamp(min=1e-30)
@@ -111,11 +111,11 @@ def test_aio_bundle_filtered():
 
 
 def test_comfy_prefix_is_stripped():
-    """Regression: les checkpoints Qwen single-file (Comfy-Org, Civitai) nomment TOUT
-    'model.diffusion_model.*'. diffusers 0.39 mappe Flux2Transformer2DModel avec une
-    fonction IDENTITE -- il n'enleve donc pas ce prefixe lui-meme. Le garder = 100% de
-    cles inconnues, aucun poids charge, modele laisse sur 'meta', et dispatch_model
-    echoue sur "Cannot copy out of meta tensor; no data!" (vu sur
+    """Regression: the single-file Qwen checkpoints (Comfy-Org, Civitai) name EVERYTHING
+    'model.diffusion_model.*'. diffusers 0.39 maps Flux2Transformer2DModel through an
+    IDENTITY function -- so it does not strip that prefix itself. Keeping it = 100% unknown
+    keys, not one weight loaded, the model left on 'meta', and dispatch_model failing on
+    "Cannot copy out of meta tensor; no data!" (seen on
     qwen_image_edit_2509_fp8_e4m3fn.safetensors)."""
     w = torch.randn(4, 4).to(torch.float8_e4m3fn)
     p = _st("prefixed.safetensors", {
@@ -128,7 +128,7 @@ def test_comfy_prefix_is_stripped():
 
 
 def test_unprefixed_keys_left_alone():
-    """Un fichier deja au layout diffusers (sans prefixe) ne doit pas etre touche."""
+    """A file already in the diffusers layout (no prefix) must be left alone."""
     w = torch.randn(4, 4).to(torch.float8_e4m3fn)
     p = _st("plain.safetensors", {_WD: w})
     sd = cz_pipeline._load_dequant_state_dict(p)
@@ -136,11 +136,11 @@ def test_unprefixed_keys_left_alone():
 
 
 def test_bf16_prefixed_is_detected_and_stripped():
-    """Le chemin NON quantifie a exactement le meme defaut: un .safetensors bf16 au
-    layout ComfyUI passe tel quel a from_single_file laisse le modele sur 'meta'.
-    Il doit donc etre detecte a l'en-tete et deprefixe comme les FP8/INT8."""
+    """The NON-quantised path has exactly the same flaw: a bf16 .safetensors in the
+    ComfyUI layout, handed to from_single_file as it is, leaves the model on 'meta'.
+    So it has to be detected from the header and unprefixed like the FP8/INT8 ones."""
     p = _st("bf16_prefixed.safetensors", {_W: torch.randn(4, 4, dtype=torch.bfloat16)})
-    assert cz_pipeline._safetensors_dequant(p) is None      # rien a dequantifier
+    assert cz_pipeline._safetensors_dequant(p) is None      # nothing to dequantise
     assert cz_pipeline._safetensors_comfy_prefixed(p) is True
     sd = cz_pipeline._load_dequant_state_dict(p)
     assert list(sd) == [_WD]
@@ -150,9 +150,9 @@ def test_bf16_prefixed_is_detected_and_stripped():
 
 
 def test_prefixed_single_file_is_loaded_as_a_state_dict():
-    """Routage: un single-file prefixe NON quantifie doit arriver a from_single_file
-    sous forme de STATE DICT deprefixe -- lui passer le chemin le renverrait droit
-    dans le bug meta-tensor."""
+    """Routing: a prefixed NON-quantised single file has to reach from_single_file as an
+    unprefixed STATE DICT -- handing it the path would send it straight back into the
+    meta-tensor bug."""
     import diffusers
     p = _st("route.safetensors", {
         _W: torch.randn(4, 4, dtype=torch.bfloat16),
@@ -175,12 +175,12 @@ def test_prefixed_single_file_is_loaded_as_a_state_dict():
     finally:
         diffusers.Flux2Transformer2DModel = old_cls
         cz_pipeline.ZIMAGE_TRANSFORMER = old_t
-    assert isinstance(seen["src"], dict), "un chemin a ete passe au lieu du state dict"
+    assert isinstance(seen["src"], dict), "a path was passed instead of the state dict"
     assert sorted(seen["src"]) == [_WD, "x_embedder.weight"], sorted(seen["src"])
 
 
 def test_convert_device_cpu_is_respected():
-    """convert_device=cpu = ne jamais toucher au GPU (conversion pendant un rendu)."""
+    """convert_device=cpu = never touch the GPU (a conversion during a render)."""
     w = torch.randn(4, 4).to(torch.float8_e4m3fn)
     p = _st("cpu_dev.safetensors", {_W: w})
     old = cz_pipeline.CONFIG.get("convert_device")
@@ -197,8 +197,8 @@ def test_convert_device_cpu_is_respected():
 
 
 def test_dequant_result_always_lands_on_cpu():
-    """Meme converti sur GPU, le state dict rendu doit etre en RAM (il part ensuite
-    dans from_single_file, et le pipeline gere lui-meme le placement/offload)."""
+    """Even converted on the GPU, the state dict handed back must be in RAM (it goes on
+    into from_single_file, and the pipeline handles the placement/offload itself)."""
     p = _st("oncpu.safetensors", {_W: torch.randn(4, 4).to(torch.float8_e4m3fn)})
     sd = cz_pipeline._load_dequant_state_dict(p)
     assert all(t.device.type == "cpu" for t in sd.values())
@@ -213,7 +213,7 @@ def test_foreign_arch_rejected():
         cz_pipeline._load_dequant_state_dict(p)
     except RuntimeError as e:
         raised = "FLUX.2" in str(e)
-    assert raised, "checkpoint quantifie d'une autre archi doit etre refuse clairement"
+    assert raised, "a quantised checkpoint of another architecture must be refused plainly"
 
 
 def test_lora_and_svdq_still_unsupported():
@@ -238,8 +238,8 @@ def _gguf(name, arch, *tensor_names):
     return p
 
 
-# Signature complete d'un transformer FLUX.2 (les 3 cles positives + un bloc).
-# Nom de constante garde pour limiter la surface de conflit au merge amont.
+# The complete signature of a FLUX.2 transformer (the 3 positive keys + one block).
+# The constant name is kept to keep the conflict surface small on an upstream merge.
 _QWEN_SIG = ("x_embedder.weight", "context_embedder.weight",
              "double_stream_modulation_img.linear.weight",
              "single_transformer_blocks.0.attn.to_q.weight")
@@ -259,10 +259,9 @@ def test_gguf_arch_and_layout():
 
 
 def test_gguf_layout_beats_a_mislabelled_architecture():
-    """Des outils de conversion tamponnent 'general.architecture' n'importe comment:
-    des Qwen-Image ont ete publiees declarees 'wan'. Les NOMS DE TENSEURS sont une
-    preuve, l'etiquette KV non -> le layout prime, sinon on ecarte un modele
-    parfaitement chargeable."""
+    """Conversion tools stamp 'general.architecture' any old way: Qwen-Image files have
+    been published declared as 'wan'. The TENSOR NAMES are proof, the KV label is not ->
+    the layout wins, otherwise a perfectly loadable model gets thrown out."""
     p = _gguf("mislabelled.gguf", "wan", *_QWEN_SIG)
     assert cz_pipeline._gguf_arch(p) == "wan"
     assert cz_pipeline._gguf_layout(p) == "flux2"
@@ -270,28 +269,29 @@ def test_gguf_layout_beats_a_mislabelled_architecture():
 
 
 def test_gguf_foreign_layout_still_rejected():
-    """Le layout reste le vrai garde-fou: un schema sd.cpp est refuse meme s'il
-    declare la bonne architecture."""
+    """The layout stays the real guard rail: an sd.cpp schema is refused even when it
+    declares the right architecture."""
     p = _gguf("sdcpp2.gguf", "flux2", "blocks.0.attn.wq.weight", "txtmlp.weight")
     assert cz_pipeline._gguf_layout(p) == "foreign"
     assert cz_pipeline._gguf_layout_unsupported(p) is not None
 
 
 def test_gguf_qwen_diffusers_layout_is_not_mistaken_for_flux2():
-    """Qwen-Image au layout diffusers partage 'transformer_blocks.', 'norm_out' et
-    'proj_out' avec FLUX.2: ces prefixes ne suffisent donc PAS a conclure. Sans la
-    signature FLUX.2 (x_embedder + context_embedder + double_stream_modulation) ->
-    layout indetermine, l'archi declaree tranche et le fichier est ecarte."""
+    """Qwen-Image in the diffusers layout shares 'transformer_blocks.', 'norm_out' and
+    'proj_out' with FLUX.2: those prefixes are therefore NOT enough to conclude. Without
+    the FLUX.2 signature (x_embedder + context_embedder + double_stream_modulation) ->
+    the layout is undetermined, the declared architecture decides, and the file is
+    dropped."""
     p = _gguf("qwenlike.gguf", "qwen_image", "transformer_blocks.0.attn.to_q.weight",
               "img_in.weight", "txt_in.weight", "norm_out.linear.weight")
     assert cz_pipeline._gguf_layout(p) == "unknown"
-    assert cz_pipeline._gguf_layout_unsupported(p) is None      # pas 'foreign'
-    assert cz_pipeline._gguf_arch(p) == "qwen_image"            # -> ecarte par l'archi
+    assert cz_pipeline._gguf_layout_unsupported(p) is None      # not 'foreign'
+    assert cz_pipeline._gguf_arch(p) == "qwen_image"            # -> dropped on its architecture
 
 
 def test_list_checkpoints_accepts_the_mislabelled_gguf():
-    """Bout en bout: le dropdown doit proposer la GGUF FLUX.2 mal etiquetee et refuser
-    la Qwen-Image, dans un dossier de checkpoints dedie."""
+    """End to end: the dropdown must offer the mislabelled FLUX.2 GGUF and refuse the
+    Qwen-Image one, in a checkpoints folder of its own."""
     import tempfile
     d = tempfile.mkdtemp(prefix="cz_ckpt_")
     for src, dst in ((_gguf("ck_ok.gguf", "wan", *_QWEN_SIG), "hyphoria_like.gguf"),
@@ -313,9 +313,9 @@ def test_list_checkpoints_accepts_the_mislabelled_gguf():
 
 
 def test_int8_convrot_declared_in_header_metadata():
-    """Variante StableYogi: convrot declare CENTRALEMENT dans
-    __metadata__._quantization_metadata, sans blobs par tenseur. L'ignorer
-    laisse la rotation en place -> bruit total (observe sur les INT8 Krea 2)."""
+    """The StableYogi variant: convrot declared CENTRALLY in
+    __metadata__._quantization_metadata, with no per-tensor blobs. Ignoring it leaves the
+    rotation in place -> pure noise (seen on the Krea 2 INT8 files)."""
     import json as _json
     torch.manual_seed(1)
     W = torch.randn(8, 512)
@@ -339,14 +339,14 @@ def test_int8_convrot_declared_in_header_metadata():
 
 
 # ---------------------------------------------------------------------------
-# FP4 (NVFP4 / MXFP4): aucun chemin ici. Le piege est qu'un FP4 n'a PAS de dtype F8,
-# donc _safetensors_dequant rend None et le fichier part dans le chemin bf16 normal
-# -- silencieusement. La page Civitai de snofs14 propose justement le meme modele en
-# "MXFP8 and NVFP4 quants": il faut nommer le refus, pas le decouvrir a l'image.
+# FP4 (NVFP4 / MXFP4): no path here. The trap is that an FP4 has NO F8 dtype, so
+# _safetensors_dequant hands back None and the file goes down the normal bf16 path
+# -- silently. snofs14's Civitai page offers that very model as
+# "MXFP8 and NVFP4 quants": the refusal has to be named, not discovered in the image.
 # ---------------------------------------------------------------------------
 
 def _hdr_with_formats(fmt, dtype="F8_E4M3"):
-    """En-tete synthetique: metadonnees de quantification ComfyUI/ModelOpt."""
+    """A synthetic header: ComfyUI/ModelOpt quantisation metadata."""
     return {
         "__metadata__": {"_quantization_metadata": json.dumps({
             "format_version": "1.0",
@@ -361,7 +361,7 @@ def _hdr_with_formats(fmt, dtype="F8_E4M3"):
 
 
 def _with_header(hdr, fn):
-    """Execute fn() en substituant l'en-tete lu par _safetensors_unsupported."""
+    """Runs fn() with the header _safetensors_unsupported reads substituted."""
     real = cz_pipeline._safetensors_header
     cz_pipeline._safetensors_header = lambda _p: hdr
     try:
@@ -371,11 +371,11 @@ def _with_header(hdr, fn):
 
 
 def test_nvfp4_is_refused_by_name():
-    hdr = _hdr_with_formats("nvfp4", dtype="U8")   # 4 bits empaquetes -> U8
+    hdr = _hdr_with_formats("nvfp4", dtype="U8")   # 4 bits packed -> U8
     why = _with_header(hdr, lambda: cz_pipeline._safetensors_unsupported("fake.safetensors"))
     assert why and "NVFP4" in why, why
     assert "fp8 or bf16" in why, why
-    # le piege exact: sans ce refus, rien ne l'arrete
+    # the exact trap: without this refusal, nothing stops it
     assert _with_header(hdr, lambda: cz_pipeline._safetensors_dequant("fake.safetensors")) is None
 
 
@@ -387,7 +387,7 @@ def test_a_f4_dtype_is_refused_even_without_metadata():
 
 
 def test_mxfp8_is_not_caught_by_the_fp4_guard():
-    """Le controle: snofs14 est du MXFP8 et doit passer, sinon on casse ce qui marche."""
+    """The control: snofs14 is MXFP8 and must pass, or we break what works."""
     hdr = _hdr_with_formats("mxfp8")
     assert _with_header(hdr, lambda: cz_pipeline._safetensors_unsupported("fake.safetensors")) is None
     assert _with_header(hdr, lambda: cz_pipeline._safetensors_dequant("fake.safetensors")) == "FP8 scaled"
