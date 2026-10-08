@@ -35,7 +35,7 @@ def test_follows_the_model_profile_by_default():
         D.CONFIG.pop("detailer_steps", None)
         assert D._detailer_steps(12) == 4, "klein est distille a 4 steps"
     _with_model("black-forest-labs/FLUX.2-klein-4B", None, check)
-    # un transformer single-file decide aussi du profil
+    # a single-file transformer decides the profile too
     _with_model("black-forest-labs/FLUX.2-klein-9B",
                 r"F:\x\pGGUFAishaNSFWFlux2Klein_v1.gguf", check)
     print("OK test_follows_the_model_profile_by_default")

@@ -146,7 +146,7 @@ def test_apply_checkpoint_refuses_the_wrong_variant():
 
         kept = P.ZIMAGE_TRANSFORMER
         msg = U._apply_checkpoint("big9b.safetensors")[0]
-        assert P.ZIMAGE_TRANSFORMER == kept, "un 9B a ete applique sur un install 4B"
+        assert P.ZIMAGE_TRANSFORMER == kept, "a 9B was applied on a 4B install"
         assert "NOT applied" in msg and "9B" in msg, msg
         assert "good4b" in msg, f"the message must say what stays in place: {msg}"
     _with_lib(check)

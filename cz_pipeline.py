@@ -3100,7 +3100,7 @@ def _trim_text_encoder(pipe):
              "hidden layers the pipeline reads; keeping every layer is the only safe "
              "answer (set `trim_text_encoder` to false to silence this).")
         return
-    keep = last + 1                      # hidden_states[k] = sortie du bloc k
+    keep = last + 1                      # hidden_states[k] = block k's output
     if len(layers) <= keep:
         return
     before = sum(p.numel() for p in enc.parameters()) * 2 / 1024 ** 3
@@ -4427,7 +4427,7 @@ def _refine_whole(pipe, image, denoise, steps, prompt, seed):
     h = round_to_multiple(image.height, 16)
     # Two attempts at most: the VRAM guard at the first step (see generate), then a retry in 'model'.
     for _attempt in (0, 1):
-        _set_slicing(pipe, max(image.size))   # a reposer sur le pipe recharge du retry
+        _set_slicing(pipe, max(image.size))   # to set again on the pipe the retry reloaded
         out = _qwen_call(
             pipe,
             prompt=prompt or "",

@@ -43,7 +43,7 @@ def test_every_preset_names_its_model_and_weight():
     s9 = cz_edit_loras.spec("Consistence-Edit 9B")
     assert s9["base"] == "klein-9B" and s9["repo"] == "lrzjason/Consistance_Edit_Lora"
     assert s9["weights"] == "f2k_9B_lcs_consist_20260415.safetensors"
-    assert cz_edit_loras.spec("consistence-edit-9b") is s9      # par adapter_name aussi
+    assert cz_edit_loras.spec("consistence-edit-9b") is s9      # by adapter_name too
 
 
 def test_consistence_9b_uses_a_local_copy_without_downloading():

@@ -61,7 +61,7 @@ def main():
     print()
     if verdict_ignored:
         print("VERDICT: guidance_scale IGNORE (modele distille).")
-        print("  -> _cfg() ne passe ni guidance_scale ni negative")
+        print("  -> _cfg() passes neither guidance_scale nor negative")
         print("  -> caps supports.negative = False + a warning on a spec with a negative")
     else:
         print("VERDICT: guidance_scale ACTIF.")
