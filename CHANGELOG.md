@@ -4,6 +4,25 @@ All notable changes to crispz-klein. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
+## Unreleased — CivitAI finds the LoRAs kept outside the app folder
+
+🔎 Fetch from CivitAI answered `model file not found` for every LoRA of an extra
+folder, and `civitai_index.bat` / `civitai_index_parallel.bat` / 🔄 Fetch all missing
+found nothing to do — while the Asset Browser listed those models perfectly well.
+
+The catalogue scans the main folder **and** the extra ones (`loras_extra_dirs`,
+`checkpoints_extra_dir`), but the CivitAI side only ever looked in the main folder: the
+per-model button joined the relative path to `LORAS_DIR`, and the batch resolved a single
+LoRA folder. A library kept outside the app folder — shared with ComfyUI or Forge, say —
+was therefore invisible to CivitAI enrichment, which is the normal setup.
+
+Both entry points now go through the folder list the catalogue itself uses:
+`resolve_lora_path` / `resolve_checkpoint` for one model, and `resolve_dirs` returning
+*every* LoRA folder for the batch (`--loras-dir` still names the main one, the configured
+extras are added).
+
+Tests in `tests/test_civitai_extra_dirs.py`, plus two in `tests/test_civitai_batch.py`.
+
 ## Unreleased — The app's own messages are in English
 
 Part of what the app printed was still French, inside an otherwise English interface:

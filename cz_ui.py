@@ -1889,6 +1889,20 @@ def _ui_set_ab_cache(path):
             "launch), then Rebuild ALL thumbnails.")
 
 
+def _civitai_model_path(rel, kind):
+    """Absolute path of an Asset Browser entry, from its path RELATIVE to its own folder.
+
+    The catalogue lists the extra folders too (_lora_dirs / _checkpoint_dirs). Joining
+    that relative path to the MAIN folder alone answered "model file not found" for every
+    model stored elsewhere -- which is the normal case when the library lives outside the
+    app folder."""
+    rel = str(rel or "").strip()
+    if not rel:
+        return ""
+    return (cz_pipeline.resolve_lora_path(rel) if kind == "loras"
+            else cz_pipeline.resolve_checkpoint(rel))
+
+
 def _api_civitai_fetch(rel, kind):
     """API (Asset Browser): starts a model's CivitAI enrichment IN THE BACKGROUND and
     returns the job's key immediately. The client then polls civitai_progress.
@@ -1896,8 +1910,7 @@ def _api_civitai_fetch(rel, kind):
     phase, then rebuilds the LoRAs/Models catalogue."""
     try:
         import cz_civitai
-        mdir = cz_pipeline.LORAS_DIR if kind == "loras" else cz_pipeline.CHECKPOINTS_DIR
-        path = os.path.join(mdir, rel or "")
+        path = _civitai_model_path(rel, kind)
         key = os.path.abspath(path)
         _bg_job_set(key, phase="start", frac=None, text="Starting…",
                          done=False, ok=False, message="")
@@ -1992,8 +2005,10 @@ def _api_civitai_fetch_all(kind):
                 api_key = getattr(cz_civitai, "API_KEY", None)
                 summary = cz_civitai_batch.run(
                     kind=kind, api_key=api_key, progress=_progress,
-                    loras_dir=cz_pipeline.LORAS_DIR,           # the LIVE folders (changeable in the UI)
-                    checkpoints_dir=cz_pipeline.CHECKPOINTS_DIR)
+                    # the LIVE folders (changeable in the UI), EXTRAS INCLUDED: the
+                    # catalogue shows them, so "fetch all missing" must cover them.
+                    loras_dir=cz_pipeline._lora_dirs(),
+                    checkpoints_dir=cz_pipeline._checkpoint_dirs())
                 try:
                     ab_build_catalog(DEFAULT_OUTPUT_DIR, cz_pipeline._lora_dirs(),
                                      cz_pipeline._checkpoint_dirs())
@@ -2565,7 +2580,7 @@ def _q_remove_many(items, sels):
 
 
 def _q_choices(items):
-    """The job list as (label, index) pairs, for the radio.
+    """The job list as (label, index) pairs, for the tickable list.
 
     Shared with build_ui on purpose. The components used to be built EMPTY while the
     accordion title and the + Queue button were computed from the restored queue, so a
