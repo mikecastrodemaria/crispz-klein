@@ -1,11 +1,11 @@
-"""Fiche CivitAI d'un modele range dans un dossier SUPPLEMENTAIRE.
+"""The CivitAI sheet of a model kept in an EXTRA folder.
 
-Le catalogue de l'explorateur liste le dossier principal ET les dossiers supplementaires
-(loras_extra_dirs / checkpoints_extra_dir), mais le bouton "Fetch from CivitAI" joignait
-le chemin relatif au seul dossier principal : toute LoRA d'une bibliotheque rangee hors
-du dossier de l'app -- le cas normal -- repondait "model file not found".
+The Asset Browser catalogue lists the main folder AND the extra ones (loras_extra_dirs /
+checkpoints_extra_dir), but the "Fetch from CivitAI" button joined the relative path to the
+main folder ALONE: any LoRA of a library kept outside the app folder -- the normal case --
+answered "model file not found".
 
-Ni reseau ni modele : on verifie seulement la resolution du chemin.
+Neither network nor model: only the path resolution is checked.
 
 Run:  .venv/Scripts/python tests/test_civitai_extra_dirs.py
 """
@@ -21,7 +21,7 @@ import cz_ui  # noqa: E402
 
 
 class _Dirs:
-    """Un dossier principal vide + un dossier supplementaire qui contient tout."""
+    """An empty main folder + an extra folder that holds everything."""
 
     def __init__(self):
         self.main = tempfile.mkdtemp()
@@ -66,8 +66,8 @@ def test_a_checkpoint_of_the_extra_folder_is_found():
 
 
 def test_a_model_missing_everywhere_falls_back_to_the_main_folder():
-    """Pas de fichier -> le chemin du dossier principal, et le message reste clair
-    ("model file not found") au lieu d'une exception."""
+    """No file -> the main folder's path, so the message stays clear ("model file not
+    found") instead of an exception."""
     with _Dirs() as d:
         got = cz_ui._civitai_model_path("ghost.safetensors", "loras")
         assert os.path.normcase(got) == os.path.normcase(
