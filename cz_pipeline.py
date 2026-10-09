@@ -640,7 +640,7 @@ def _qwen_call(pipe, **kw):
         try:
             return pipe(**kw)
         except TypeError as e:
-            # callback_on_step_end = the optional VRAM guard (see _vram_guard_kwargs):
+            # callback_on_step_end = the VRAM guard and the live preview (see
             # an old diffusers build that does not know it runs without the guard.
             if any(k in kw for k in ("true_cfg_scale", "negative_prompt", "callback_on_step_end")):
                 for k in ("true_cfg_scale", "negative_prompt", "callback_on_step_end"):
@@ -2687,22 +2687,293 @@ def retest_offload():
     return f"auto -> {mode}"
 
 
-def _vram_guard_kwargs():
-    """Runtime safety net: a callback_on_step_end that checks AFTER the first denoise step
-    in effective mode 'none' that the VRAM is not saturated (the load-time test estimates; a
-    third-party process may have arrived since, or the requested resolution exceeds the
-    margin). Saturated -> the flag + an interruption of the denoise; the caller switches to
-    'model' and replays the job ONCE.
-    {} when the guard is pointless (offload already on, no CUDA).
+# ----------------------------------------------------------------------------
+# Live preview: the image as it forms, during the denoise (Fooocus-style).
+#
+# Decoding the latents with the VAE at every step would cost 0.2-0.5s a step -- on an
+# 8-step render that nearly doubles the generation. So the latents are projected to RGB
+# through a linear matrix, like ComfyUI/Fooocus do with their `latent_rgb_factors`: one
+# matmul on a grid far smaller than the image, then a tiny uint8 transfer. Free.
+#
+# FLUX.2 hands the callback its latents PACKED -- (batch, h*w, 128), the 2x2 patch folded
+# into the channels -- and we project those 128 channels STRAIGHT to RGB instead of
+# unpatchifying first. Measured on 8 renders, 18k samples: R2 0.88 that way against
+# 0.76 for a 32-channel fit on the unpatchified grid, because each output pixel gets four
+# times the inputs. The grid is coarser in exchange (image/16 instead of /8) and that
+# costs nothing visible: the preview is scaled up to LIVE_PREVIEW_MAX_SIDE anyway.
+#
+# The matrix was NOT copied from another project, nor from crispz-studio, whose VAE is a
+# different one (the 16-channel Flux VAE): it is a least-squares fit against THIS
+# decoder, the last denoise step's latents against the image the VAE then produced.
+# Residual sigma 0.20 on a [-1, 1] range: the composition and the broad colours are
+# right, which is all a preview owes you. The decoder is not linear, so only a
+# TAESD-style decoder would do better.
+_LATENT_RGB = (
+    (  0.00907,   0.00263,   0.00354),
+    (  0.00350,   0.00174,   0.00190),
+    ( -0.00285,  -0.00157,   0.00036),
+    ( -0.00129,   0.00260,   0.00536),
+    (  0.00089,   0.00703,   0.02061),
+    (  0.00182,   0.00735,   0.02157),
+    (  0.00119,  -0.00127,   0.01359),
+    ( -0.00682,  -0.00353,   0.01269),
+    ( -0.00173,  -0.00731,   0.00682),
+    ( -0.00198,  -0.00415,   0.00691),
+    ( -0.00320,  -0.00377,   0.01093),
+    ( -0.00773,  -0.00428,   0.01290),
+    (  0.03204,   0.08574,   0.13745),
+    (  0.05580,   0.10188,   0.14146),
+    (  0.06445,   0.10374,   0.13770),
+    (  0.07235,   0.10765,   0.13873),
+    (  0.00581,  -0.01476,  -0.00798),
+    (  0.00120,  -0.01278,  -0.00736),
+    (  0.01215,  -0.00088,  -0.00000),
+    (  0.01111,  -0.00945,  -0.01372),
+    ( -0.00512,  -0.01559,  -0.01985),
+    ( -0.01059,  -0.01497,  -0.02072),
+    ( -0.00911,  -0.01404,  -0.01926),
+    ( -0.01415,  -0.01512,  -0.01964),
+    ( -0.00908,   0.01922,  -0.00812),
+    ( -0.01372,   0.01450,  -0.01172),
+    ( -0.01458,   0.01153,  -0.01484),
+    ( -0.01035,   0.02015,  -0.00664),
+    ( -0.00269,   0.01084,   0.00905),
+    ( -0.00314,   0.00932,   0.00717),
+    ( -0.00720,   0.00265,   0.00416),
+    ( -0.00172,   0.00885,   0.00595),
+    ( -0.10862,  -0.08194,  -0.05014),
+    ( -0.10605,  -0.07459,  -0.03757),
+    ( -0.09801,  -0.07222,  -0.03256),
+    ( -0.07789,  -0.04060,   0.00745),
+    (  0.00702,   0.00735,   0.00628),
+    ( -0.00063,  -0.00075,   0.00139),
+    ( -0.00244,  -0.00197,  -0.00204),
+    (  0.00158,  -0.00279,  -0.00757),
+    (  0.00219,   0.00241,  -0.00327),
+    (  0.00726,   0.00732,   0.00158),
+    (  0.00370,  -0.00471,  -0.00917),
+    (  0.00730,   0.00076,  -0.00408),
+    (  0.00971,  -0.00135,  -0.02388),
+    (  0.01101,   0.00159,  -0.01958),
+    (  0.01011,   0.00028,  -0.02471),
+    (  0.00869,   0.00144,  -0.02369),
+    (  0.00270,   0.00401,   0.00688),
+    (  0.00149,   0.00131,   0.00871),
+    (  0.00100,  -0.00318,   0.00239),
+    (  0.00215,  -0.00405,   0.00003),
+    (  0.00688,  -0.00404,   0.00305),
+    (  0.00193,  -0.01285,  -0.00244),
+    (  0.00737,  -0.00372,   0.00509),
+    (  0.00302,  -0.00914,  -0.00187),
+    ( -0.00044,  -0.00133,  -0.00050),
+    ( -0.00138,  -0.00484,  -0.00621),
+    (  0.00712,   0.00120,  -0.00106),
+    (  0.00302,   0.00199,  -0.00558),
+    ( -0.02169,   0.00882,   0.00336),
+    ( -0.01951,   0.01446,   0.00988),
+    ( -0.02901,  -0.00241,  -0.00224),
+    ( -0.02520,   0.00207,  -0.00277),
+    ( -0.00781,   0.00271,   0.00425),
+    ( -0.00622,   0.00387,   0.00838),
+    (  0.00260,   0.01400,   0.01692),
+    ( -0.00481,   0.00977,   0.01329),
+    (  0.01788,   0.00815,   0.01115),
+    (  0.01347,   0.00535,   0.00502),
+    (  0.01330,   0.00836,   0.01218),
+    (  0.01098,   0.00653,   0.00841),
+    ( -0.00801,   0.00282,   0.00076),
+    (  0.00209,   0.00555,   0.00283),
+    ( -0.00653,   0.00445,   0.00348),
+    (  0.00210,   0.00767,  -0.00130),
+    (  0.01117,  -0.03307,  -0.02554),
+    (  0.01629,  -0.02269,  -0.01466),
+    (  0.02029,  -0.02008,  -0.01502),
+    (  0.02330,  -0.01337,  -0.00550),
+    (  0.00084,   0.00786,   0.00757),
+    ( -0.00837,  -0.00276,  -0.00212),
+    (  0.00090,   0.00507,   0.00137),
+    ( -0.00568,  -0.00675,  -0.00635),
+    (  0.00295,  -0.00703,  -0.00311),
+    (  0.00435,  -0.00422,   0.00009),
+    (  0.00417,  -0.00255,  -0.00232),
+    (  0.00415,  -0.00210,  -0.00074),
+    ( -0.00045,   0.00497,   0.00323),
+    ( -0.00825,  -0.00437,  -0.00525),
+    ( -0.00060,   0.00062,   0.00076),
+    ( -0.01042,  -0.00280,  -0.00211),
+    (  0.01215,   0.01247,   0.00796),
+    (  0.00841,   0.00600,   0.00182),
+    (  0.00828,   0.00903,   0.00492),
+    (  0.01002,   0.00975,   0.00865),
+    ( -0.00506,   0.00642,   0.00828),
+    ( -0.00048,  -0.00203,  -0.00817),
+    ( -0.00413,   0.00871,   0.00820),
+    ( -0.00013,  -0.00585,  -0.00981),
+    ( -0.00229,   0.00606,   0.01388),
+    ( -0.00855,  -0.00014,   0.00844),
+    (  0.00332,   0.00971,   0.01590),
+    ( -0.00929,  -0.00311,   0.00265),
+    (  0.00108,  -0.01564,  -0.01744),
+    (  0.00064,  -0.02156,  -0.02596),
+    (  0.00485,  -0.01208,  -0.01345),
+    ( -0.00008,  -0.01416,  -0.01498),
+    (  0.00691,   0.00297,   0.00598),
+    (  0.00918,   0.01010,   0.01548),
+    (  0.00063,   0.00184,   0.00806),
+    ( -0.00449,   0.00509,   0.01229),
+    ( -0.01027,  -0.01529,  -0.00945),
+    ( -0.01241,  -0.02204,  -0.01411),
+    ( -0.00912,  -0.01258,  -0.00756),
+    ( -0.01208,  -0.01553,  -0.00996),
+    ( -0.00658,   0.00184,   0.00612),
+    ( -0.01251,   0.00528,   0.01291),
+    ( -0.01218,   0.00607,   0.01382),
+    ( -0.01389,   0.00232,   0.01030),
+    ( -0.00685,  -0.00511,  -0.00208),
+    ( -0.00685,  -0.00627,  -0.00223),
+    ( -0.01107,  -0.00797,  -0.00831),
+    ( -0.00331,  -0.00354,  -0.00063),
+    (  0.00118,  -0.00700,  -0.01080),
+    (  0.00235,  -0.01132,  -0.01624),
+    (  0.01237,  -0.00290,  -0.01243),
+    (  0.00214,  -0.00832,  -0.01613),
+)
+_LATENT_RGB_BIAS = (-0.07179, -0.10373, -0.20264)
+
+_LP_CFG = CONFIG.get("live_preview") if isinstance(CONFIG.get("live_preview"), dict) else {}
+LIVE_PREVIEW_ENABLED = bool(_LP_CFG.get("enabled", True))
+# 1 = every step. Raise it on a slow card if the preview itself ever shows up in the
+# timings (it should not: the cost is a matmul on the latent grid).
+LIVE_PREVIEW_EVERY = max(1, int(_LP_CFG.get("every_n_steps", 1) or 1))
+LIVE_PREVIEW_MAX_SIDE = max(64, int(_LP_CFG.get("max_side", 512) or 512))
+
+# The slot the denoise writes and the UI reads. 'seq' increments on every new image, which
+# is how the UI stream knows there is something new without comparing pixels; 'busy' is
+# raised around a whole click (not a single pipe call: one Generate can chain txt2img,
+# upscale and refine).
+_PREVIEW = {"img": None, "seq": 0, "step": 0, "total": 0, "busy": False}
+_PREVIEW_LOCK = threading.Lock()
+
+
+def set_live_preview(v):
+    """Turns the live preview on or off while the app runs (Advanced > Generation).
+
+    Off means OFF: _step_end_kwargs stops adding the callback, so the denoise does not
+    even project its latents, and the Generate handler skips the worker thread it needs
+    to stream frames. Nothing to pay, nothing to undo."""
+    global LIVE_PREVIEW_ENABLED
+    LIVE_PREVIEW_ENABLED = bool(v)
+    _log(f"live preview {'on' if LIVE_PREVIEW_ENABLED else 'off'}")
+
+
+def preview_begin():
+    """Arms the live preview for one Generate click."""
+    with _PREVIEW_LOCK:
+        _PREVIEW.update(img=None, seq=0, step=0, total=0, busy=True)
+    _dbg("live preview: armed")
+
+
+def preview_end():
+    """Disarms it. The UI stream stops at the next poll."""
+    with _PREVIEW_LOCK:
+        _PREVIEW["busy"] = False
+
+
+def preview_snapshot():
+    """A copy of the current state, for the UI stream (never the live dict)."""
+    with _PREVIEW_LOCK:
+        return dict(_PREVIEW)
+
+
+_LATENT_RGB_CACHE = {}
+
+
+def _latent_rgb_on(device, dtype):
+    """The projection matrices on `device`, built once per device.
+
+    Rebuilding them per call costs a host->device copy and a sync on every step: measured
+    27 ms against 1.2 ms of actual work on a latent grid."""
+    key = (str(device), str(dtype))
+    hit = _LATENT_RGB_CACHE.get(key)
+    if hit is None:
+        hit = (torch.tensor(_LATENT_RGB, dtype=dtype, device=device),
+               torch.tensor(_LATENT_RGB_BIAS, dtype=dtype, device=device))
+        _LATENT_RGB_CACHE[key] = hit
+    return hit
+
+
+def latent_preview_image(latents, width=0, height=0):
+    """Packed latents (B, h*w, 128) -> a small PIL image, through the linear projection.
+
+    Runs on whatever device the latents are on (a 128x3 matmul on the GPU is instant) and
+    only the HxWx3 uint8 result crosses back, so the denoise is not stalled by a transfer.
+    The grid comes from the asked resolution: a packed token is a 16x16 block of pixels.
+    None when the two do not agree -- better no preview than a scrambled one."""
+    z = latents[0].detach().float()
+    if z.dim() != 2:
+        return None
+    seq = z.shape[0]
+    gh, gw = int(height) // 16, int(width) // 16
+    if gh * gw != seq:
+        side = int(round(seq ** 0.5))           # a square render, resolution unknown
+        if side * side != seq:
+            return None
+        gh = gw = side
+    m, b = _latent_rgb_on(z.device, z.dtype)
+    rgb = ((z @ m + b).clamp(-1.0, 1.0) + 1.0).mul(127.5).round().byte().cpu().numpy()
+    img = Image.fromarray(rgb.reshape(gh, gw, 3), mode="RGB")
+    side = max(img.size)
+    if side < LIVE_PREVIEW_MAX_SIDE:
+        k = LIVE_PREVIEW_MAX_SIDE / float(side)
+        img = img.resize((max(1, int(img.width * k)), max(1, int(img.height * k))),
+                         Image.BILINEAR)
+    return img
+
+
+def _store_preview(latents, step, total, width=0, height=0):
+    """Never lets a preview failure touch the render: it is a courtesy, not a result."""
+    if latents is None:
+        return
+    try:
+        img = latent_preview_image(latents, width, height)
+    except Exception as e:
+        _dbg(f"live preview skipped: {e}")
+        return
+    if img is None:
+        return
+    with _PREVIEW_LOCK:
+        if not _PREVIEW["busy"]:
+            return
+        _PREVIEW.update(img=img, step=int(step), total=int(total))
+        _PREVIEW["seq"] += 1
+
+
+def _step_end_kwargs(total_steps=0, width=0, height=0):
+    """The callback_on_step_end the pipes run, carrying two unrelated passengers.
+
+    VRAM guard: AFTER the first denoise step in effective mode 'none', checks that the VRAM
+    is not saturated (the load-time test estimates; a third-party process may have arrived
+    since, or the requested resolution exceeds the margin). Saturated -> the flag + an
+    interruption of the denoise; the caller switches to 'model' and replays the job ONCE.
+
+    Live preview: projects the latents to a small RGB image for the UI (see
+    latent_preview_image). Costs a matmul on the latent grid, so it rides along every step.
+
+    {} when neither has anything to do -- then the pipe runs with no callback at all.
 """
-    if DEVICE != "cuda" or _effective_offload() != "none":
+    guard = DEVICE == "cuda" and _effective_offload() == "none"
+    preview = LIVE_PREVIEW_ENABLED and _PREVIEW["busy"]
+    if not guard and not preview:
         return {}
 
     def _cb(pipe, i, t, cb_kwargs):
         global _VRAM_DOWNGRADE
-        if i == 0 and cz_hw.vram_saturated():
+        if guard and i == 0 and cz_hw.vram_saturated():
             _VRAM_DOWNGRADE = True
             pipe._interrupt = True
+            return cb_kwargs
+        if preview and (i % LIVE_PREVIEW_EVERY == 0):
+            _store_preview(cb_kwargs.get("latents"), i + 1, total_steps, width, height)
         return cb_kwargs
     return {"callback_on_step_end": _cb}
 
@@ -4120,7 +4391,7 @@ def generate(prompt, width, height, steps, seed, negative_prompt=""):
             num_inference_steps=int(steps),
             generator=_make_generator(seed),
             **_cfg(negative_prompt),
-            **_vram_guard_kwargs(),
+            **_step_end_kwargs(int(steps), w, h),
         ).images[0]
         if not _consume_vram_downgrade():
             break
@@ -4479,7 +4750,7 @@ def _refine_whole(pipe, image, denoise, steps, prompt, seed):
             num_inference_steps=int(steps),
             generator=_make_generator(seed),
             **_cfg(None),
-            **_vram_guard_kwargs(),
+            **_step_end_kwargs(int(steps), w, h),
         ).images[0]
         if not _consume_vram_downgrade():
             return out

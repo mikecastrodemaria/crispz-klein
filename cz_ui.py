@@ -14,6 +14,8 @@ import gc
 import io
 import random
 import threading
+import contextvars
+import functools
 import warnings
 
 # Silences the Gradio DeprecationWarnings "pass theme/css/js to launch() instead":
@@ -138,6 +140,10 @@ ASPECT_RATIOS = {
 # Cost: 1.0 to 1.6 Mpix. Beyond ~1.3 Mpix it is slower, and a model trained around a million
 # pixels can drift in composition there (a duplicated subject) -- to be chosen when the
 # recipe you follow asks for it, not by default.
+# Live preview: how often the Generate handler looks at the denoise's slot for a new
+# frame. No ceiling is needed -- the loop ends when the render thread does.
+_LIVE_PREVIEW_POLL = 0.25
+
 # Fooocus-style Performance -> (gen_steps, guidance) for the loaded model.
 PERFORMANCE = {
     "Turbo (8 steps)":    (8, 0.0),
@@ -2103,6 +2109,67 @@ def _vram_hint(e):
     return ("  \n**VRAM full**, even after clearing the cache: close the other GPU apps "
             "(ComfyUI...), lower Image number, the upscale factor or the number of "
             "references. If the next render fails too, restart crispz-klein.")
+
+
+def _with_live_preview(fn):
+    """Makes a Generate handler show the image AS IT FORMS, in the result gallery.
+
+    The denoise drops a small projection of its latents into cz_pipeline at every step
+    (preview_snapshot). This wrapper turns the handler into a generator: it runs `fn` in
+    a thread and, while that thread works, hands each new frame to the gallery -- the
+    three other outputs left alone. The finished images then replace the last frame.
+
+    ONE component, ONE event writing it. An earlier design streamed the preview into a
+    second component from a SECOND event on the same button, because two concurrent
+    events writing the same output race and the loser could be the finished image. That
+    race cannot happen here: the frames and the result come out of the same generator,
+    in order.
+
+    `fn` keeps its fifteen exits untouched -- avoiding that rewrite is the whole point of
+    wrapping. The price is the worker thread: gradio's progress bar lives in context
+    variables bound to the calling thread, so the context is COPIED into it. Without that
+    copy, progress() there does nothing at all, silently.
+
+    With the live preview turned off in the config, the old direct call is used: no
+    thread, no generator behaviour change to inherit.
+"""
+    @functools.wraps(fn)
+    def _wrapped(*a, **kw):
+        if not cz_pipeline.LIVE_PREVIEW_ENABLED:
+            cz_pipeline.preview_begin()
+            try:
+                yield fn(*a, **kw)
+            finally:
+                cz_pipeline.preview_end()
+            return
+        box = {}
+
+        def _run():
+            try:
+                box["out"] = fn(*a, **kw)
+            except BaseException as exc:        # noqa: BLE001 - re-raised as is
+                box["err"] = exc
+
+        cz_pipeline.preview_begin()
+        worker = threading.Thread(target=contextvars.copy_context().run, args=(_run,),
+                                  name="cz-generate", daemon=True)
+        worker.start()
+        try:
+            last, n = -1, 0
+            while worker.is_alive():
+                p = cz_pipeline.preview_snapshot()
+                if p["img"] is not None and p["seq"] != last:
+                    last, n = p["seq"], n + 1
+                    yield [p["img"]], gr.update(), gr.update(), gr.update()
+                worker.join(_LIVE_PREVIEW_POLL)   # wakes as soon as the render is done
+        finally:
+            worker.join()
+            cz_pipeline.preview_end()
+        _dbg(f"live preview: {n} frame(s) shown")
+        if "err" in box:
+            raise box["err"]
+        yield box["out"]
+    return _wrapped
 
 
 def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
@@ -4840,6 +4907,17 @@ def build_ui():
                             info="Batch: each image takes the NEXT line of the wildcard file "
                                  "(deterministic) instead of a random one.")
                         wild_order_status = gr.Markdown("")
+                        live_preview_cb = gr.Checkbox(
+                            value=cz_pipeline.LIVE_PREVIEW_ENABLED,
+                            label="Live preview while rendering",
+                            info="Show the image as it forms, in the Result gallery, during "
+                                 "the denoise. The latents are projected to RGB through a "
+                                 "16x3 matrix -- about 1.5 ms a step, where a real VAE decode "
+                                 "would nearly double an 8-step Turbo render. It is an "
+                                 "approximation: composition and broad colours are right, fine "
+                                 "detail is not. Off removes the whole thing (no callback on "
+                                 "the denoise, no frames). Applied live; config "
+                                 "`live_preview.enabled` sets the startup value.")
                         save_pre_upscale_cb = gr.Checkbox(
                             value=bool(CONFIG.get("save_pre_upscale", False)),
                             label="Also save pre-upscale image",
@@ -4912,6 +4990,7 @@ def build_ui():
         meta_scheme_dd.change(set_metadata_scheme, [meta_scheme_dd], [meta_scheme_status])
         wildcards_order_cb.change(set_wildcards_in_order, [wildcards_order_cb], [wild_order_status])
         save_pre_upscale_cb.change(cz_pipeline.set_save_pre_upscale, [save_pre_upscale_cb], None)
+        live_preview_cb.change(cz_pipeline.set_live_preview, [live_preview_cb], None)
         detail_faces_cb.change(cz_detailer.set_enabled, [detail_faces_cb], None)
         detailer_denoise_sl.change(_ui_set_detailer_denoise, [detailer_denoise_sl], None)
         detail_hands_cb.change(cz_detailer.set_hands_enabled, [detail_hands_cb], None)
@@ -5083,7 +5162,11 @@ def build_ui():
                        tile, overlap, refine_tile, refine_overlap, save_mode, output_dir, output_format,
                        history, auto_upscale_cb]
         _gen_outputs = [out, report, history, history_gallery]
-        btn.click(_ui_generate, inputs=_gen_inputs, outputs=_gen_outputs)
+        # show_progress_on=report: gradio's spinner COVERS every output component
+        # while the event runs, and this one yields a frame per denoise step -- the
+        # gallery would strobe, image and spinner replacing each other all the way.
+        btn.click(_with_live_preview(_ui_generate), inputs=_gen_inputs,
+                  outputs=_gen_outputs, show_progress_on=[report])
         # The Reference (Omni) tab's Edit button: same inputs/outputs, forced routing.
         omni_edit_btn.click(_ui_edit_generate, inputs=_gen_inputs, outputs=_gen_outputs)
         if JOB_QUEUE_ENABLED:

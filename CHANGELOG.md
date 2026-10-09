@@ -4,6 +4,33 @@ All notable changes to crispz-klein. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
+## Unreleased — The image as it forms, in the result gallery
+
+The denoise now hands its latents to the interface at every step, projected to RGB: a
+matmul on the token grid, where a real VAE decode would cost 0.2-0.5 s a step and nearly
+double an 8-step render. The frames land IN the result gallery and the finished images
+replace them — one component, and ONE event writing it, so a frame can never land after
+the result.
+
+**The matrix is klein's own.** crispz-studio's could not be reused: its VAE is the
+16-channel Flux VAE, klein's is an `AutoencoderKLFlux2` with 32 channels, handed to the
+callback PACKED — (batch, h*w, 128), one token per 16x16 block of pixels. Those 128
+channels are projected straight to RGB rather than unpatchified first: measured on eight
+renders, **R2 0.88 that way against 0.76** for a 32-channel fit on the unpatchified grid,
+because each output pixel gets four times the inputs. The grid is coarser in exchange
+(image/16 instead of /8), which costs nothing visible since the preview is scaled up to
+`max_side` anyway. Residual sigma 0.20 on a [-1, 1] range: composition and broad
+colours right, fine detail not.
+
+Advanced > Generation carries a **Live preview while rendering** switch, applied live;
+config `live_preview` sets the startup value, `every_n_steps` and `max_side` the refresh
+rate and the size sent to the browser.
+
+txt2img and img2img only for now: Reference (Omni) does not know its output resolution
+at the call site, and the token count alone cannot give the grid back.
+
+Tests in `tests/test_live_preview.py` and `tests/test_latent_preview.py`.
+
 ## Unreleased — A card that refuses an offload mode no longer ends in a traceback
 
 In offload `none` the whole model is copied onto the card at once. With a big model that
