@@ -192,8 +192,9 @@ def resolve_lora_path(name):
     name = str(name or "")
     if os.path.isabs(name):
         return name
+    rel = name.replace("\\", "/").strip("/")
     for d in _lora_dirs():
-        p = os.path.join(d, name)
+        p = os.path.join(d, *rel.split("/")) if rel else d
         if os.path.isfile(p):
             return p
     return os.path.join(LORAS_DIR, name)
@@ -2289,23 +2290,38 @@ def _checkpoint_dirs():
     return dirs
 
 
-_MODEL_EXTS = (".safetensors", ".ckpt", ".pt", ".sft", ".gguf")
+# Folders never scanned for checkpoints (and LoRAs): tool caches and the Asset Browser's
+# own index. Mirrors _scan_catalog in cz_assetbrowser.
+_SKIP_MODEL_SUBDIRS = ("_index", ".cache", "recipes")
+_CHECKPOINT_EXTS = (".safetensors", ".ckpt", ".pt", ".sft", ".gguf")
+
+
+def _walk_model_files(d, exts):
+    """Yields (relative path with '/', absolute path) of every file under `d` whose name
+    ends with `exts`, RECURSIVELY, skipping _SKIP_MODEL_SUBDIRS and hidden folders. The
+    relative path is what the dropdowns show ('ZIB/model.safetensors')."""
+    if not d or not os.path.isdir(d):
+        return
+    for root, dirs, files in os.walk(d):
+        dirs[:] = sorted(x for x in dirs
+                         if x not in _SKIP_MODEL_SUBDIRS and not x.startswith("."))
+        for f in sorted(files):
+            if f.lower().endswith(exts):
+                fp = os.path.join(root, f)
+                yield os.path.relpath(fp, d).replace(os.sep, "/"), fp
+
+
+_MODEL_EXTS = _CHECKPOINT_EXTS
 
 
 def _walk_checkpoints(d):
-    """Model files under `d`, RECURSIVELY, as paths relative to it with '/'.
+    """Model files under `d`, RECURSIVELY, as paths relative to it with '/' (the same walk
+    as the LoRAs: _walk_model_files, caches and hidden folders skipped).
 
     A library gets tidied sooner or later -- 4b/ and 9b/, by author, by family. This used
     to be a single os.listdir, so everything below the first level was invisible and the
-    tidying itself made the models disappear. list_loras has walked subfolders from the
-    start; this now matches it."""
-    out = []
-    for root, dirs, files in os.walk(d):
-        dirs[:] = [x for x in dirs if x not in ("_index", ".cache", "recipes")]
-        for f in files:
-            if f.lower().endswith(_MODEL_EXTS):
-                out.append(os.path.relpath(os.path.join(root, f), d).replace(os.sep, "/"))
-    return sorted(out)
+    tidying itself made the models disappear."""
+    return sorted(rel for rel, _fp in _walk_model_files(d, _CHECKPOINT_EXTS))
 
 
 def list_checkpoints():
@@ -2412,24 +2428,60 @@ def checkpoint_refusal(name):
 
 
 def resolve_checkpoint(name):
-    """Absolute path of a single-file checkpoint from its file name, looked up in the
-    checkpoints folders (main then extra). Returns name as is when it is already absolute;
-    falls back to the main folder when not found."""
+    """Absolute path of a single-file checkpoint from a list_checkpoints entry (a path
+    relative to its folder, '/' or '\', subfolders included), looked up in the checkpoints
+    folders (main then extra). Returns name as is when it is already absolute. An entry that is
+    not at that path any more is then searched by its FILE NAME in every subfolder (a
+    preset, a queued job or an image's metadata saved before the model was filed away
+    keeps working); falls back to the main folder when not found."""
     if not name or os.path.isabs(name):
         return name
+    rel = str(name).replace("\\", "/").strip("/")
     for d in _checkpoint_dirs():
-        p = os.path.join(d, name.replace("/", os.sep))
+        p = os.path.join(d, *rel.split("/"))
         if os.path.isfile(p):
             return p
-    # A preset, a queued job or an image's metadata holds the name the model had when it
-    # was written, and the library may have been tidied into subfolders since. Find it by
-    # its file name rather than answering 'not found' for a model that is right there.
-    base = os.path.basename(name).lower()
-    for d in _checkpoint_dirs():
-        for rel in _walk_checkpoints(d):
-            if os.path.basename(rel).lower() == base:
-                return os.path.join(d, rel.replace("/", os.sep))
+    # Not at that path: a preset, a queued job or an image's metadata holds the name the
+    # model had when it was written, and the library may have been tidied since. Find it
+    # by its file name rather than answering 'not found' for a model that is right there.
+    found = checkpoint_by_basename(rel.rsplit("/", 1)[-1])
+    if found:
+        return found
     return os.path.join(CHECKPOINTS_DIR, name)
+
+
+def checkpoint_by_basename(fname):
+    """Absolute path of the checkpoint file named `fname` (case-insensitive) anywhere under
+    the checkpoints folders, or None. Several matches: the first one in listing order
+    (main folder first), with a log line."""
+    want = str(fname or "").lower()
+    hits = []
+    for d in _checkpoint_dirs():
+        for _rel, fp in _walk_model_files(d, _CHECKPOINT_EXTS):
+            if os.path.basename(fp).lower() == want:
+                hits.append(fp)
+    if len(hits) > 1:
+        _log(f"checkpoint '{fname}': {len(hits)} files share this name, using {hits[0]}")
+    return hits[0] if hits else None
+
+
+def checkpoint_relname(path):
+    """The list_checkpoints entry of an absolute checkpoint path (relative to the
+    checkpoints folder that holds it, '/'), or the bare file name when it lies outside
+    every folder. Used by the UI where a name has to match the catalogue."""
+    path = str(path or "")
+    if not path:
+        return ""
+    if not os.path.isabs(path):
+        path = resolve_checkpoint(path)
+    ap = os.path.normcase(os.path.abspath(path))
+    for d in _checkpoint_dirs():
+        if not d:
+            continue
+        base = os.path.normcase(os.path.abspath(d))
+        if ap.startswith(base.rstrip(os.sep) + os.sep):
+            return os.path.relpath(os.path.abspath(path), os.path.abspath(d)).replace(os.sep, "/")
+    return os.path.basename(path)
 
 
 _FILE_INFO_CACHE = {}
@@ -2557,22 +2609,17 @@ def lora_choices():
 
 
 def list_loras():
-    """LoRAs (.safetensors / .ckpt / .pt) from the loras folder, RECURSIVELY (subfolders
-    included). Returns paths RELATIVE to LORAS_DIR with '/' (e.g.
-    'subfolder/my_lora.safetensors') -> set_loras / resolve resolve them through
-    os.path.join(LORAS_DIR, name)."""
+    """LoRAs (.safetensors / .ckpt / .pt) from the loras folders (main + extras),
+    RECURSIVELY (subfolders included, caches and hidden folders skipped). Returns paths
+    RELATIVE to their folder with '/' (e.g. 'subfolder/my_lora.safetensors') -> set_loras /
+    resolve_lora_path resolve them through os.path.join(<folder>, name)."""
     exts = (".safetensors", ".ckpt", ".pt")
     out, seen = [], set()
     for d in _lora_dirs():          # main then extras: same name -> the main one wins
-        if not os.path.isdir(d):
-            continue
-        for root, _dirs, files in os.walk(d):
-            for f in files:
-                if f.lower().endswith(exts):
-                    rel = os.path.relpath(os.path.join(root, f), d).replace(os.sep, "/")
-                    if rel.lower() not in seen:
-                        seen.add(rel.lower())
-                        out.append(rel)
+        for rel, _fp in _walk_model_files(d, exts):
+            if rel.lower() not in seen:
+                seen.add(rel.lower())
+                out.append(rel)
     return sorted(out)
 
 

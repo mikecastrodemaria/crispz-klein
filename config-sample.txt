@@ -146,7 +146,7 @@
     "refine_tile_denoise_cap": 0.4,
     "refine_tile_prompt": "",
     "checkpoints_dir": "",
-    "_checkpoints_extra_dir_help": "Optional SECOND checkpoints folder, merged into the same model list (e.g. a shared drive alongside your local one). Empty = only checkpoints_dir.",
+    "_checkpoints_extra_dir_help": "Optional SECOND checkpoints folder, merged into the same model list (e.g. a shared drive alongside your local one). Both folders are scanned recursively: a model in a subfolder is listed as 'ZIB/model.safetensors'. Empty = only checkpoints_dir.",
     "checkpoints_extra_dir": "",
     "_zimage_omni_model_help": "Edit / multi-reference (Omni) model. Empty = the base model itself: on klein the base pipeline edits natively, there is no separate edit checkpoint, and a repo other than the base is ignored with a warning. The field stays so every client of the family reads the same one.",
     "zimage_omni_model": "",

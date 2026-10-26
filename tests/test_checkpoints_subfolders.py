@@ -23,15 +23,19 @@ class _Lib:
     def __init__(self):
         self.main = tempfile.mkdtemp()
         self.extra = tempfile.mkdtemp()
+        self.loras = tempfile.mkdtemp()
 
     def __enter__(self):
-        self.old = (P.CHECKPOINTS_DIR, P.CHECKPOINTS_EXTRA_DIR)
+        self.old = (P.CHECKPOINTS_DIR, P.CHECKPOINTS_EXTRA_DIR,
+                    P.LORAS_DIR, list(P.LORAS_EXTRA_DIRS))
         P.CHECKPOINTS_DIR, P.CHECKPOINTS_EXTRA_DIR = self.main, self.extra
+        P.LORAS_DIR, P.LORAS_EXTRA_DIRS = self.loras, []
         return self
 
     def __exit__(self, *exc):
-        P.CHECKPOINTS_DIR, P.CHECKPOINTS_EXTRA_DIR = self.old
-        for d in (self.main, self.extra):
+        (P.CHECKPOINTS_DIR, P.CHECKPOINTS_EXTRA_DIR,
+         P.LORAS_DIR, P.LORAS_EXTRA_DIRS) = self.old
+        for d in (self.main, self.extra, self.loras):
             shutil.rmtree(d, ignore_errors=True)
         return False
 
@@ -58,6 +62,7 @@ def test_the_index_and_cache_folders_are_left_out():
     with _Lib() as lib:
         lib.put(lib.main, "_index/thumbs/x.safetensors")
         lib.put(lib.main, ".cache/y.safetensors")
+        lib.put(lib.main, ".hidden/z.safetensors")            # a hidden folder
         lib.put(lib.main, "9b/real.safetensors")
         assert P._walk_checkpoints(lib.main) == ["9b/real.safetensors"]
 
@@ -97,6 +102,60 @@ def test_an_absolute_path_is_left_alone():
     with _Lib() as lib:
         p = lib.put(lib.main, "9b/model.safetensors")
         assert P.resolve_checkpoint(p) == p
+
+
+def _same(a, b):
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+
+def test_the_windows_form_of_an_entry_resolves_too():
+    with _Lib() as lib:
+        real = lib.put(lib.extra, "9b/model.safetensors")
+        assert _same(P.resolve_checkpoint("9b" + chr(92) + "model.safetensors"), real)
+        assert _same(P.resolve_checkpoint("MODEL.safetensors"), real)      # case-insensitive
+
+
+def test_a_stale_relative_entry_is_found_by_its_file_name():
+    """The library was re-filed: 'old/base.safetensors' now lives under '9b/'."""
+    with _Lib() as d:
+        real = d.put(d.main, "9b/base.safetensors")
+        assert _same(P.resolve_checkpoint("old/base.safetensors"), real)
+
+
+def test_the_catalogue_name_of_an_absolute_path():
+    """The Asset Browser focus: the models catalogue is indexed by the relative path."""
+    with _Lib() as lib:
+        real = lib.put(lib.extra, "4b/turbo.safetensors")
+        assert P.checkpoint_relname(real) == "4b/turbo.safetensors"
+        assert P.checkpoint_relname("4b/turbo.safetensors") == "4b/turbo.safetensors"
+        assert P.checkpoint_relname(os.path.join(tempfile.gettempdir(), "x", "out.safetensors")) \
+            == "out.safetensors"
+
+
+def test_a_lora_in_a_subfolder_is_listed_and_resolved():
+    with _Lib() as lib:
+        real = lib.put(lib.loras, "Style/noir.safetensors")
+        lib.put(lib.loras, "root.safetensors")
+        lib.put(lib.loras, ".cache/junk.safetensors")
+        assert P.list_loras() == ["Style/noir.safetensors", "root.safetensors"], P.list_loras()
+        assert _same(P.resolve_lora_path("Style/noir.safetensors"), real)
+        assert _same(P.resolve_lora_path("Style" + chr(92) + "noir.safetensors"), real)
+
+
+def test_the_ui_focus_and_presets_accept_subfolder_entries():
+    import cz_ui
+    with _Lib() as lib:
+        lib.put(lib.main, "9b/base.safetensors")
+        # No catalogue rebuild against these temp folders (it writes under the output dir).
+        keep = cz_ui.ab_build_catalog
+        cz_ui.ab_build_catalog = lambda *a, **k: None
+        try:
+            _msg, url = cz_ui._asset_focus_url("models", "9b/base.safetensors")
+        finally:
+            cz_ui.ab_build_catalog = keep
+        assert url.endswith("&focus=9b/base.safetensors"), url
+        # The auto-preset is named after the file alone, not the subfolder.
+        assert cz_ui._preset_sanitize(os.path.splitext(os.path.basename("9b/base.safetensors"))[0]) == "base"
 
 
 if __name__ == "__main__":
