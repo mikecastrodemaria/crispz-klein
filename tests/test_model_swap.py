@@ -128,6 +128,37 @@ def test_set_zimage_model_single_file_does_not_free():
     P._BASE_PIPE = None
 
 
+def test_set_zimage_model_single_file_of_the_other_variant_switches_the_base(monkeypatch):
+    """The CLI / protocol path: a 9B file while the 4B base is loaded used to be set
+    blindly and die at load time. Now the base follows the file (full reload) and the
+    log says so; a file of the SAME variant still swaps the transformer alone."""
+    d = tempfile.mkdtemp()
+    ck = os.path.join(d, "darkBeast9B.safetensors")
+    with open(ck, "wb") as f:
+        f.write(b"x")
+    monkeypatch.setattr(P, "_flux2_hidden_dim", lambda p: 4096)
+    monkeypatch.setattr(P, "_base_hidden_dim", lambda base=None: 3072)
+    said = []
+    monkeypatch.setattr(P, "_log", lambda m: said.append(m))
+    P._BASE_PIPE = object()
+    P._LOADED_KEY = ("black-forest-labs/FLUX.2-klein-4B", None, "none")
+    P.BASE_REPO = "black-forest-labs/FLUX.2-klein-4B"
+    P.ZIMAGE_TRANSFORMER = None
+    P.set_zimage_model(ck)
+    assert P.BASE_REPO == "black-forest-labs/FLUX.2-klein-9B"
+    assert P.ZIMAGE_TRANSFORMER == ck
+    assert P._BASE_PIPE is None, "another base: VAE and text encoder change, full reload"
+    assert any("FLUX.2-klein-9B" in m and "NON-COMMERCIAL" in m for m in said)
+    # the same variant: nothing moves but the transformer
+    monkeypatch.setattr(P, "_flux2_hidden_dim", lambda p: 3072)
+    P.BASE_REPO = "black-forest-labs/FLUX.2-klein-4B"
+    sentinel = object()
+    P._BASE_PIPE = sentinel
+    P.set_zimage_model(os.path.join(d, "darkBeast9B.safetensors"))
+    assert P.BASE_REPO == "black-forest-labs/FLUX.2-klein-4B" and P._BASE_PIPE is sentinel
+    P._BASE_PIPE = None
+
+
 def test_set_zimage_model_new_base_repo_still_reloads():
     """The base repo changes -> the VAE/encoder change too -> a full reload is mandatory."""
     P._BASE_PIPE = object()

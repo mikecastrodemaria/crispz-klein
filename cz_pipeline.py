@@ -906,6 +906,22 @@ def set_zimage_model(repo_or_path):
     if not repo_or_path:
         return
     if _is_single_file(repo_or_path):
+        # A file of the OTHER variant (a 9B build while the base is the 4B, or the
+        # reverse) cannot ride on the loaded VAE / text encoder: the UI refuses it in
+        # the dropdown (checkpoint_refusal), but the CLI and the protocol v1 land here
+        # with a bare path and used to set it blindly, so the load died gigabytes later
+        # with "<file>: FLUX.2-klein-9B, and this build runs FLUX.2-klein-4B"
+        # (crispz-dataset-studio picking a 9B file from cli_caps, 2026-10-29). The
+        # file knows its variant: the base follows it, said in the log, a full reload.
+        other = _single_file_variant_repo(repo_or_path)
+        if other and other != BASE_REPO:
+            _log(f"Klein base repo {BASE_REPO} -> {other}: {os.path.basename(repo_or_path)} "
+                 f"is a {_variant_name(_single_file_hidden_dim(repo_or_path))} build, "
+                 f"full reload (VAE + text encoder change too)."
+                 + _variant_note(_single_file_hidden_dim(repo_or_path)))
+            BASE_REPO = other
+            _BASE_DIM_CACHE.pop(other, None)
+            free_vram()
         # A transformer-only change: NO free_vram -> _ensure_base will swap the
         # transformer alone (VAE + text encoder kept in VRAM).
         if repo_or_path != ZIMAGE_TRANSFORMER:
@@ -1400,6 +1416,25 @@ def _flux2_variant_mismatch(dim, base=None):
     if not want or dim == want:
         return None
     return f"{_variant_name(dim)}, and this build runs {_variant_name(want)}"
+
+
+def _single_file_hidden_dim(path):
+    """The hidden dimension of a single-file checkpoint (.gguf or .safetensors), None
+    when unreadable."""
+    try:
+        return _gguf_hidden_dim(path) if _is_gguf_path(path) else _flux2_hidden_dim(path)
+    except Exception:
+        return None
+
+
+def _single_file_variant_repo(path):
+    """The official base repo a single-file checkpoint needs when it does NOT match the
+    current base, otherwise None (same variant, or nothing readable: then nothing moves,
+    better to try than to swap a 29 GB base on a guess)."""
+    dim = _single_file_hidden_dim(path)
+    if not _flux2_variant_mismatch(dim):
+        return None
+    return _variant_repo(dim)
 
 
 def _variant_repo(dim):

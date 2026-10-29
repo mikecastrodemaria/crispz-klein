@@ -4,6 +4,17 @@ All notable changes to crispz-klein. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
+## Unreleased : a single-file checkpoint of the other variant switches the base (CLI, protocol)
+
+Through `czp` or the protocol v1 (crispz-dataset-studio picking a 9B file from `cli_caps`),
+`set_zimage_model(<file>)` set the transformer blindly: a 9B build on the 4B base died at
+load time, gigabytes later, with `<file>: FLUX.2-klein-9B, and this build runs
+FLUX.2-klein-4B`. The file knows its variant: the base now follows it (the official repo,
+a full reload since the VAE and the text encoder change), said in the log with the 9B
+licence note. The dropdown keeps refusing such a file (that is a menu, it can show the
+fix). Test in `tests/test_model_swap.py`.
+
+
 ## Unreleased — The image as it forms, in the result gallery
 
 The denoise now hands its latents to the interface at every step, projected to RGB: a
