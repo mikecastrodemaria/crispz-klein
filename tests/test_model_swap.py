@@ -159,6 +159,23 @@ def test_set_zimage_model_single_file_of_the_other_variant_switches_the_base(mon
     P._BASE_PIPE = None
 
 
+def test_set_zimage_model_base_repo_removes_the_single_file_override(monkeypatch):
+    """Asking for the base repo by name while a file of the same variant is the
+    transformer must drop that file (the official transformer comes back on the next
+    run), without throwing the pipe away: VAE and text encoder are the same."""
+    said = []
+    monkeypatch.setattr(P, "_log", lambda m: said.append(m))
+    sentinel = object()
+    P._BASE_PIPE = sentinel
+    P.BASE_REPO = "black-forest-labs/FLUX.2-klein-4B"
+    P.ZIMAGE_TRANSFORMER = "D:/models/fluxKlein4BPro_v10.safetensors"
+    P.set_zimage_model("black-forest-labs/FLUX.2-klein-4B")
+    assert P.ZIMAGE_TRANSFORMER is None
+    assert P.BASE_REPO == "black-forest-labs/FLUX.2-klein-4B" and P._BASE_PIPE is sentinel
+    assert any("removed" in m and "fluxKlein4BPro_v10" in m for m in said)
+    P._BASE_PIPE = None
+
+
 def test_set_zimage_model_new_base_repo_still_reloads():
     """The base repo changes -> the VAE/encoder change too -> a full reload is mandatory."""
     P._BASE_PIPE = object()

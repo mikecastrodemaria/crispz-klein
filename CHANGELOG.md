@@ -12,7 +12,10 @@ load time, gigabytes later, with `<file>: FLUX.2-klein-9B, and this build runs
 FLUX.2-klein-4B`. The file knows its variant: the base now follows it (the official repo,
 a full reload since the VAE and the text encoder change), said in the log with the 9B
 licence note. The dropdown keeps refusing such a file (that is a menu, it can show the
-fix). Test in `tests/test_model_swap.py`.
+fix). And a base repo asked by name (`--zimage-model black-forest-labs/FLUX.2-klein-4B`,
+`spec.model`) now removes the single-file override first, as the dropdown does: it used
+to change nothing while a file of the same variant was loaded, so an A/B of a Civitai
+file against the base rendered the same images twice. Tests in `tests/test_model_swap.py`.
 
 
 ## Unreleased — The image as it forms, in the result gallery

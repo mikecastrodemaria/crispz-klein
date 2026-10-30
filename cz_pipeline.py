@@ -927,7 +927,19 @@ def set_zimage_model(repo_or_path):
         if repo_or_path != ZIMAGE_TRANSFORMER:
             ZIMAGE_TRANSFORMER = repo_or_path
             _log("Klein transformer (single-file) changed -> transformer swap on next run")
-    elif repo_or_path != BASE_REPO:
+    else:
+        # A base repo asked by name means "the official transformer": any single-file
+        # override is removed first, as the dropdown does (_apply_checkpoint). Through
+        # the CLI and the protocol this was not done: asking for FLUX.2-klein-4B while
+        # a 4B file was the transformer changed NOTHING, and an A/B of the Pro v10 file
+        # against the base rendered the same images twice, pixel for pixel
+        # (crispz-dataset-studio, 2026-10-30).
+        if ZIMAGE_TRANSFORMER:
+            _log(f"Klein transformer (single-file) {os.path.basename(ZIMAGE_TRANSFORMER)} "
+                 f"removed: {repo_or_path} is a base repo -> official transformer on next run")
+            ZIMAGE_TRANSFORMER = None
+        if repo_or_path == BASE_REPO:
+            return
         # The base repo changes: the VAE/encoder/tokenizer change too -> a full reload.
         BASE_REPO = repo_or_path
         # The repo's dimension is cached, FAILURES INCLUDED. A gated repo whose licence
