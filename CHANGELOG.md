@@ -4,6 +4,19 @@ All notable changes to crispz-klein. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
+## Unreleased : protocol v1, `switch_model` lets a caller switch the model on `cli_gen`
+
+On the remote route the gen op ignored `spec.model` (with a warning), on purpose: a
+script must not swap the model of the user's running instance under their feet. That
+blocked crispz-dataset-studio's LoRA score: a LoRA trained on Klein 4B is skipped on a
+9B instance, and the caller had no way to fix it but to ask the user to change the menu.
+Now a caller that asks explicitly (`"switch_model": true` next to `"model"`) gets the
+switch: applied like on the edit op, said in the result's warnings and in the log, and
+the model stays loaded after the call (no reload back and forth). Without the flag
+nothing changes, the warning just names the flag. `cli_caps` announces it with
+`supports.switch_model`. Tests in `tests/test_protocol.py`.
+
+
 ## Unreleased : a single-file checkpoint of the other variant switches the base (CLI, protocol)
 
 Through `czp` or the protocol v1 (crispz-dataset-studio picking a 9B file from `cli_caps`),
