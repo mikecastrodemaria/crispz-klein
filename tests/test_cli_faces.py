@@ -1,6 +1,9 @@
 """cli_faces: the endpoint's import target exists and the payload has the shape the
 family clients read (box, mouth, embedding), with a fake insightface app (no model)."""
+import os
+import sys
 import types
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 from PIL import Image
 import cz_face
