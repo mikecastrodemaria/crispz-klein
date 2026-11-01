@@ -36,6 +36,7 @@ import gc
 import sys
 import time
 import json
+import re
 import threading
 
 import numpy as np
@@ -157,7 +158,15 @@ def _split_dirs(spec):
     if not spec:
         return []
     if isinstance(spec, str):
-        parts = [p for chunk in spec.split(os.pathsep) for p in chunk.split(";")]
+        # ';' always separates. os.pathsep too, except where it is the ':' of a
+        # Windows drive ("X:/a" on a Linux CI or in a shared preferences.json): on
+        # POSIX, splitting that ':' cut "X:/a;Y:/b" into "X", "/a", "Y", "/b".
+        parts = []
+        for chunk in spec.split(";"):
+            if os.pathsep == ";" or re.match(r"^[A-Za-z]:[\\/]", chunk.strip()):
+                parts.append(chunk)
+            else:
+                parts.extend(chunk.split(os.pathsep))
     else:
         parts = list(spec)
     out = []
