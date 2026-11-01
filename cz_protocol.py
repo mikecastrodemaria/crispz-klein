@@ -20,7 +20,10 @@ Output: always ONE JSON line on stdout. Exit codes:
 v1: one image per call (the caller loops); guidance is accepted but not
 applied (warning, never silent); on the remote route spec.model is ignored
 with a warning (we never swap the model of the user's running instance under
-their feet).
+their feet), unless the caller asks for it explicitly with spec.switch_model =
+true (crispz-dataset-studio scoring a LoRA trained on the other Klein variant):
+the model is then switched, it STAYS loaded after the call, and the result and
+the log say so. caps announces it with supports.switch_model.
 
 loras: spec.loras = ["file.safetensors:0.8", ...], hot-swapped per call. The
 prompt may also carry <lora:file[:weight]> tags (A1111/Civitai habit): they
@@ -67,7 +70,7 @@ FAMILY_CAPS = {"img2img": True, "inpaint": True}
 SPEC_FIELDS = ("protocol", "op", "prompt", "negative", "width", "height",
                "seed", "steps", "guidance", "refs", "loras", "model", "input", "mask",
                "out_dir", "count", "detail_faces", "detail_hands",
-               "factor", "denoise", "fast")
+               "factor", "denoise", "fast", "switch_model")
 
 _DEF_URL = "http://127.0.0.1:7860"
 
@@ -216,6 +219,7 @@ def caps_dict():
                          "max_refs": MAX_REFS, "seed": True,
                          "negative": SUPPORTS_NEGATIVE, "arbitrary_size": True,
                          "faces": _faces_available(),
+                         "switch_model": True,
                          "detail_faces": _faces_available(),
                          "detail_hands": _hands_available(),
                          "edit": _omni_configured(),
@@ -490,6 +494,7 @@ def validate_spec(spec, op="gen"):
                             "the image too")
     out["model"] = (str(spec["model"]).strip()
                     if spec.get("model") else None)
+    out["switch_model"] = bool(spec.get("switch_model"))
     out["out_dir"] = (str(spec["out_dir"]).strip()
                       if spec.get("out_dir") else None)
     count = spec.get("count")
@@ -818,9 +823,20 @@ def handle_gen_json(spec_json):
     path."""
     try:
         spec, warnings = validate_spec(json.loads(spec_json or "{}"))
-        if spec.get("model"):
+        if spec.get("model") and spec.get("switch_model"):
+            # Opt-in only: the caller takes the swap (a full reload between the 4B
+            # and the 9B) and the instance keeps the new model afterwards.
+            before = _model_loaded()
+            if spec["model"] not in (before, os.path.basename(before or "")):
+                msg = (f"model switched on the running instance at the caller's "
+                       f"request (switch_model): {before or 'default'} -> "
+                       f"{spec['model']}; it stays loaded after this call")
+                _log(f"[protocol] {msg}")
+                warnings.append(msg)
+        elif spec.get("model"):
             warnings.append("model override ignored on the remote route (the "
-                            "running instance keeps its model)")
+                            "running instance keeps its model; send "
+                            "switch_model: true to switch it)")
             spec["model"] = None
         return run_gen(spec, warnings, route="remote")
     except SpecError as e:
@@ -933,8 +949,9 @@ def main(argv=None):
         url = args.remote or instance_url()
         inst = probe_instance(url)
         if inst:
-            if args.op == "gen" and spec.get("model"):
-                # (upscale: spec.model = the ESRGAN model, harmless remote)
+            if args.op == "gen" and spec.get("model") and not spec.get("switch_model"):
+                # (upscale: spec.model = the ESRGAN model, harmless remote;
+                # switch_model: the instance does the swap and says so)
                 warnings.append("model override ignored on the remote route "
                                 "(the running instance keeps its model)")
                 spec["model"] = None

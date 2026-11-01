@@ -283,6 +283,31 @@ def test_handle_gen_json_remote_refuses_model_override():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_handle_gen_json_remote_switches_model_on_request():
+    """switch_model: true (crispz-dataset-studio scoring a 4B LoRA while the app is on
+    9B): the model IS applied, and the result says it stays loaded."""
+    d = tempfile.mkdtemp(prefix="cz_proto_sw_")
+    try:
+        with _fake_pipeline() as fake:
+            res = cp.handle_gen_json(json.dumps(
+                {"protocol": 1, "prompt": "x", "width": 64, "height": 64,
+                 "model": "black-forest-labs/FLUX.2-klein-4B", "switch_model": True,
+                 "out_dir": d}))
+        assert res["ok"] and res["route"] == "remote"
+        assert fake.calls["model"] == "black-forest-labs/FLUX.2-klein-4B"
+        assert any("switch_model" in w and "stays loaded" in w for w in res["warnings"])
+        assert not any("unknown field" in w for w in res["warnings"])
+        # switch_model without a model: nothing to switch, nothing said
+        spec, w = cp.validate_spec({"protocol": 1, "prompt": "x", "switch_model": True})
+        assert spec["switch_model"] is True and spec["model"] is None and not w
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_caps_announces_switch_model():
+    assert cp.caps_dict()["supports"]["switch_model"] is True
+
+
 def test_handle_gen_json_bad_spec_is_clean():
     res = cp.handle_gen_json("{not json")
     assert res["ok"] is False and res["exit_code"] == 1
