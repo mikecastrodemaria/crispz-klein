@@ -6,6 +6,13 @@ The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browse
 
 ## Unreleased : protocol v1, `switch_model` lets a caller switch the model on `cli_gen`
 
+- **Performance presets and config.txt** (2026-11-07, ported from crispz-moss): a
+  `performance_presets` list copied into config.txt used to replace the app's list
+  entirely, hiding every preset added since. Now the config's entries come first (they
+  win on a name) and the app's missing presets are appended, said in the log at start;
+  `performance_presets_merge: false` keeps the config's list alone. The built-in list in `cz_ui.py` was a stale one (Turbo 8 / Quality 20 / Base
+  CFG 28), masked by the sample: it is now the sample's, with a test.
+
 On the remote route the gen op ignored `spec.model` (with a warning), on purpose: a
 script must not swap the model of the user's running instance under their feet. That
 blocked crispz-dataset-studio's LoRA score: a LoRA trained on Klein 4B is skipped on a

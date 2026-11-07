@@ -48,6 +48,8 @@
     "caption_model": "blip-large",
     "_caption_model_help": "Auto-describe model: blip-large (default, local) | blip-base | ollama:<vision model> (listed in Prompt AI once Ollama is detected; blip-large takes over if Ollama fails)",
     "_performance_presets_help": "name -> [steps, guidance] or [steps, guidance, lora_file]. On the klein BASE repo the model is step-wise distilled and guidance is IGNORED by diffusers (measured bit-identical from 1.0 to 8.0), so those presets keep it at 1.0. It is NOT ignored on a single-file checkpoint: some community builds are explicitly undistilled ('use with Turbo Lora') and need a real CFG plus many more steps - that is what the Undistilled preset is for.",
+    "_performance_presets_merge_help": "true (default): the app's own presets missing from your performance_presets are added after yours, so a config.txt copied from an older sample keeps showing the presets added since (said in the log). false: your list is the whole list.",
+    "performance_presets_merge": true,
     "performance_presets": {
         "Turbo (4 steps)": [
             4,
