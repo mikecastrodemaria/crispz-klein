@@ -6,6 +6,13 @@ The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browse
 
 ## Unreleased : protocol v1, `switch_model` lets a caller switch the model on `cli_gen`
 
+- **Extra folder lists on Linux** (2026-11-07, whole family): `loras_extra_dirs` and the
+  other 'a;b' folder lists were split on os.pathsep blindly, so on Linux (the CI) a
+  Windows path in a shared preferences.json broke on its drive colon ('X:/a;Y:/b' into
+  'X', '/a', 'Y', '/b'; `test_lora_extra_dirs` was red on the CI of crispz-krea2 and
+  crispz-studio). One rule now, `cz_core.split_dir_spec`, used by cz_pipeline,
+  cz_civitai_batch, cz_edit_loras and cz_protocol: ';' and the POSIX ':' separate, a
+  drive colon never does.
 - **Performance presets and config.txt** (2026-11-07, ported from crispz-moss): a
   `performance_presets` list copied into config.txt used to replace the app's list
   entirely, hiding every preset added since. Now the config's entries come first (they

@@ -44,6 +44,7 @@ import torch
 from PIL import Image
 
 import cz_core
+from cz_core import split_dir_spec  # noqa: E402
 from cz_core import (
     CONFIG, HERE, DEVICE, DTYPE,
     DEFAULT_TILE, DEFAULT_OVERLAP, DEFAULT_REFINE_TILE, DEFAULT_REFINE_OVERLAP,
@@ -154,27 +155,8 @@ LORAS_DIR = (os.environ.get("LORAS_DIR") or _prefs.get("loras_dir")
 
 
 def _split_dirs(spec):
-    """Folder list from a JSON list or from an 'a;b' string (os.pathsep or ';')."""
-    if not spec:
-        return []
-    if isinstance(spec, str):
-        # ';' always separates. os.pathsep too, except where it is the ':' of a
-        # Windows drive ("X:/a" on a Linux CI or in a shared preferences.json): on
-        # POSIX, splitting that ':' cut "X:/a;Y:/b" into "X", "/a", "Y", "/b".
-        parts = []
-        for chunk in spec.split(";"):
-            if os.pathsep == ";" or re.match(r"^[A-Za-z]:[\\/]", chunk.strip()):
-                parts.append(chunk)
-            else:
-                parts.extend(chunk.split(os.pathsep))
-    else:
-        parts = list(spec)
-    out = []
-    for p in parts:
-        p = str(p or "").strip()
-        if p and p not in out:
-            out.append(p)
-    return out
+    """Folder list from a JSON list or from an 'a;b' string (see cz_core.split_dir_spec)."""
+    return split_dir_spec(spec)      # cz_core: ';' and POSIX ':' split, drive colons kept
 
 
 # EXTRA LoRA folders (e.g. the Civitai library shared with other tools): env

@@ -46,6 +46,7 @@ import argparse
 import re
 import urllib.request
 
+from cz_core import split_dir_spec  # noqa: E402
 from cz_core import CONFIG, APP_VERSION, _log
 from prompt_variants import has_variants
 
@@ -146,7 +147,7 @@ def _list_model_files(kind, exts=(".safetensors", ".gguf")):
         extra = (os.environ["LORAS_EXTRA_DIRS"] if "LORAS_EXTRA_DIRS" in os.environ
                  else (_prefs.get("loras_extra_dirs") or CONFIG.get("loras_extra_dirs") or []))
         if isinstance(extra, str):
-            extra = [p for c in extra.split(os.pathsep) for p in c.split(";")]
+            extra = split_dir_spec(extra)
         for x in extra:
             x = str(x or "").strip()
             if x and x not in dirs_to_scan:
